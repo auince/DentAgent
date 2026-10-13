@@ -57,6 +57,8 @@ class DomainModel:
         self.client = client or LocalModelClient()
 
     def run(self, text):
+        if self.task == 'crack':
+            return self.crack(text)
         prompt = (ROOT/'prompts/root_canal_legacy.txt').read_text()
         raw = parse_json(self.client.complete(self.task, BOUNDARY + prompt +
             '\n本次仅输出 {"personLabel":{患者因素},"toothLabel":[{"position":"原文牙位",'
@@ -72,3 +74,28 @@ class DomainModel:
                                 'status': 'assessed' if grade is not None else 'incomplete'})
         return {'status': 'needs_review', 'task': self.task, 'factors': factors,
                 'assessments': assessments, 'issues': [], 'source_sha256': digest(text)}
+
+    def crack(self,text):
+        rules=read_json(ROOT/'schemas/crack_rules.json')
+        prompt=(ROOT/'prompts/crack_legacy.txt').read_text()
+        raw=parse_json(self.client.complete('crack',BOUNDARY+prompt+
+            '\n此版由模型完成加分、扣分、封顶与等级计算：'+json.dumps(rules,ensure_ascii=False)+
+            '\nStrong对应总分>=45，Moderate对应15至44，其余Low_Confidence。'
+            '\n输出 {"factors":[原契约患牙对象],"assessments":[{"tooth":"患牙编号","score":数值,"grade":"Strong|Moderate|Low_Confidence"}]}。',text))
+        if not isinstance(raw,dict) or not isinstance(raw.get('factors'),list) or not raw['factors'] or not isinstance(raw.get('assessments'),list):raise ValueError('invalid_crack_output')
+        seen=set()
+        for tooth in raw['factors']:
+            if not isinstance(tooth,dict):raise ValueError('invalid_crack_tooth')
+            pos=tooth_key(tooth.get('患牙编号',''))
+            if not pos or pos in seen:raise ValueError('missing_or_duplicate_crack_tooth')
+            seen.add(pos)
+            for field in rules['points']:
+                if not isinstance(tooth.get(field),list):raise ValueError('invalid_crack_factor_field')
+        graded=set()
+        for item in raw['assessments']:
+            if not isinstance(item,dict) or item.get('grade') not in {'Strong','Moderate','Low_Confidence'} or type(item.get('score')) not in (int,float):raise ValueError('invalid_crack_grade')
+            tooth=tooth_key(item.get('tooth',''))
+            if tooth not in seen or tooth in graded:raise ValueError('crack_grade_tooth_mismatch')
+            graded.add(tooth);item['assessment_origin']='domain_model'
+        if seen!=graded:raise ValueError('missing_crack_assessment')
+        return {'task':'crack','status':'needs_review',**raw,'issues':[],'source_sha256':digest(text)}
