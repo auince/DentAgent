@@ -37,7 +37,7 @@ class JobManager:
         if not p.exists():raise KeyError('run_not_found')
         state=read_json(p)
         if state.get('status') in {'completed','failed'}:
-            directory=self.settings.path('assessment_runs_dir' if state['kind']=='assessment' else 'conversation_runs_dir')
+            directory=self.settings.path({'assessment':'assessment_runs_dir','consultation':'conversation_runs_dir','retrieval_index':'index_runs_dir'}[state['kind']])
             result=directory/(rid+'.json')
             if result.exists():state['result']=read_json(result)
         return state

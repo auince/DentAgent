@@ -153,7 +153,7 @@ class ConsultationAgent:
                             experts[task]={'error':str(exc)[:160],'status':'failed'}
                             obs.append({'tool':'expert','task':task,'status':'failed','error':str(exc)[:160]});issues.append('expert_failed:'+task)
             elif kind=='retrieve':
-                hits=self.index.search(a['query'],None if a['task']=='all' else a['task'],limit=3)
+                hits=self.index.search(a['query'],None if a['task']=='all' else a['task'])
                 knowledge=list({x['id']:x for x in knowledge+hits}.values())
                 obs.append({'tool':'knowledge_search','task':a['task'],'count':len(hits)})
             elif kind=='review_image':

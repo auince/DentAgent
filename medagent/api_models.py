@@ -60,3 +60,7 @@ class SearchRequest(StrictBody):
         if self.task is not None and self.task not in REGISTRY:raise ValueError('unsupported_specialty')
         if self.limit is not None and not 1<=self.limit<=cfg['search_limit']:raise ValueError('invalid_search_limit')
         return self
+
+
+class IndexBuildRequest(StrictBody):
+    force:bool=False

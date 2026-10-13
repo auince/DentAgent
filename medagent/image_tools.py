@@ -3,12 +3,13 @@ import base64
 import io
 import json
 from .common import digest, parse_json
+from .settings import get_settings
 
 
 class ImageTools:
     def __init__(self, client, images):
         self.client, self.images, self.events, self.ocr_results = client, {}, [], {}
-        if len(images) > 8:
+        if len(images) > get_settings().data['limits']['images']:
             raise ValueError('too_many_images')
         for i, image in enumerate(images):
             self.register('image_'+str(i), image)

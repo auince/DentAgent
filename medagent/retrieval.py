@@ -67,7 +67,6 @@ class RetrievalService:
     def __init__(self,settings):
         self.settings=settings
         cfg=settings.data['retrieval']
-        if cfg['mode']!='bm25':raise ValueError('V8_supports_bm25_only')
         self.index=KnowledgeIndex(settings.path('knowledge_dir'),cfg['chunk_size'],cfg['chunk_stride'])
     def search_with_trace(self,query,task=None,limit=None):
         limit=limit or self.settings.data['retrieval']['top_k']
@@ -81,4 +80,10 @@ from functools import lru_cache
 @lru_cache(maxsize=1)
 def create_index():
     from .settings import get_settings
-    return RetrievalService(get_settings())
+    settings=get_settings()
+    if settings.data['retrieval']['mode']=='hybrid':
+        from .dense_retrieval import HybridRetrievalService
+        cfg=settings.data['retrieval']
+        lexical=KnowledgeIndex(settings.path('knowledge_dir'),cfg['chunk_size'],cfg['chunk_stride'])
+        return HybridRetrievalService(settings,lexical)
+    return RetrievalService(settings)

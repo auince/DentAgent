@@ -102,4 +102,4 @@ class KnowledgeSearchSkill:
 
     def __init__(self,index): self.index=index
 
-    def run(self,task,text): return self.index.search(text,task=task,limit=4)
+    def run(self,task,text): return self.index.search(text,task=task)

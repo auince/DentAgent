@@ -65,7 +65,7 @@ class DiseaseAgent:
         except Exception as exc:return {'facts':[],'error':str(exc)[:240],'failed':True,'trace':[trace_event(self.task+'.validate','failed')]}
 
     def retrieve(self,s):
-        return {'knowledge':self.index.search(s['text'],task=self.task,limit=4),'trace':[trace_event(self.task+'.retrieve')]}
+        return {'knowledge':self.index.search(s['text'],task=self.task),'trace':[trace_event(self.task+'.retrieve')]}
 
     def ground(self,s):
         evidence=[{'factor_id':f['id'],'quote':f['quote'],'start':f['start'],'end':f['end'],

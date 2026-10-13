@@ -31,14 +31,40 @@ class Settings:
             url=service.get('base_url','');parts=urlsplit(url)
             if parts.scheme not in {'http','https'} or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
                 raise ValueError('invalid_model_service_url:'+name)
-            if not service.get('chat_path','').startswith('/'):raise ValueError('invalid_chat_path:'+name)
+            if 'chat_path' in service and not service['chat_path'].startswith('/'):raise ValueError('invalid_chat_path:'+name)
         self.model_roles()
         mode=self.data['retrieval'].get('mode')
         if mode not in {'bm25','hybrid'}:raise ValueError('invalid_retrieval_mode')
         r=self.data['retrieval']
         for key in ('top_k','candidate_k','chunk_size','chunk_stride'):
             if type(r.get(key)) is not int or r[key]<1:raise ValueError('invalid_retrieval_limit:'+key)
-        if r['candidate_k']<r['top_k'] or r['chunk_stride']>r['chunk_size']:raise ValueError('invalid_retrieval_window')
+        if r['candidate_k']<r['top_k'] or r['chunk_stride']>r['chunk_size'] or r['top_k']>self.data['limits']['search_limit']:raise ValueError('invalid_retrieval_window')
+
+        if mode=='hybrid':
+            if r.get('failure_policy') not in {'fail','bm25_with_notice'}:raise ValueError('invalid_retrieval_failure_policy')
+            if r.get('index_policy') not in {'require_current','build_if_missing'}:raise ValueError('invalid_dense_index_policy')
+            if type(r.get('max_index_bytes')) is not int or r['max_index_bytes']<1:raise ValueError('invalid_dense_index_size_limit')
+            fusion=r['fusion']
+            if type(fusion['rrf_k']) is not int or fusion['rrf_k']<1:raise ValueError('invalid_rrf_k')
+            import math
+            for name in ('bm25_weight','dense_weight'):
+                if type(fusion[name]) not in (int,float) or not math.isfinite(fusion[name]) or fusion[name]<=0:raise ValueError('invalid_fusion_weight')
+            for name in ('embedding','reranker'):
+                model=r[name]
+                if model['service'] not in self.data['model_services']:raise ValueError('unknown_retrieval_service')
+                if not isinstance(model['model'],str) or not model['model'] or not isinstance(model['revision'],str) or not model['revision']:raise ValueError('retrieval_identity_required')
+                if not isinstance(model['request_path'],str) or not model['request_path'].startswith('/'):raise ValueError('invalid_retrieval_request_path')
+                for key in ('timeout','max_response_bytes'):
+                    if type(model[key]) is not int or model[key]<1:raise ValueError('invalid_retrieval_request_limit')
+                if type(model['retries']) is not int or not 0<=model['retries']<=3:raise ValueError('invalid_retrieval_retries')
+                if type(model['retry_delay_seconds']) not in (int,float) or not math.isfinite(model['retry_delay_seconds']) or model['retry_delay_seconds']<0:raise ValueError('invalid_retry_delay')
+            e=r['embedding'];rr=r['reranker']
+            if type(e['batch_size']) is not int or e['batch_size']<1 or type(e['max_input_chars']) is not int or e['max_input_chars']<1:raise ValueError('invalid_embedding_batch')
+            if not all(isinstance(e[key],str) for key in ('query_prefix','document_prefix')):raise ValueError('invalid_embedding_prefix')
+            if e['dimensions'] is not None and (type(e['dimensions']) is not int or e['dimensions']<1):raise ValueError('invalid_embedding_dimensions')
+            if type(rr['enabled']) is not bool or rr['protocol'] not in {'tei','cohere'}:raise ValueError('unsupported_reranker_protocol')
+            for key in ('max_query_chars','max_document_chars'):
+                if type(rr[key]) is not int or rr[key]<1:raise ValueError('invalid_reranker_input_limit')
 
     def path(self,name):
         value=Path(self.data['paths'][name]).expanduser()

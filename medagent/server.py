@@ -49,7 +49,7 @@ class BodyLimitMiddleware:
 def create_app(config_path=None):
     settings=configure(config_path);h=settings.data['http']
     # Import after configuration selection: the specialty registry uses this file.
-    from .api_models import AssessmentRequest,SessionRequest,MessageRequest,MemoryRequest,SearchRequest
+    from .api_models import AssessmentRequest,SessionRequest,MessageRequest,MemoryRequest,SearchRequest,IndexBuildRequest
     from .sessions import SessionStore,SessionBusy
     from .consultation import ConsultationService
     from .pipeline import Pipeline
@@ -137,6 +137,18 @@ def create_app(config_path=None):
     def forget(conversation_id:str,request:Request):return request.app.state.store.forget(check_id(conversation_id))
     @router.post('/knowledge/search',tags=['knowledge'])
     def search(body:SearchRequest,request:Request):return request.app.state.index.search_with_trace(body.query,body.task,body.limit)
+    @router.get('/knowledge/status',tags=['knowledge'])
+    def knowledge_status(request:Request):return request.app.state.index.describe()
+    @router.post('/knowledge/index',status_code=202,tags=['knowledge'])
+    def build_index(body:IndexBuildRequest,request:Request,idempotency_key:str|None=Header(default=None)):
+        index=request.app.state.index
+        if not hasattr(index,'build'):raise HTTPException(status_code=409,detail='index_build_requires_hybrid_mode')
+        def build(rid,old):
+            from .common import write_json
+            report={'run_id':rid,'status':'completed','kind':'retrieval_index','index':index.build(body.force)}
+            write_json(settings.path('index_runs_dir')/(rid+'.json'),report)
+            return report
+        return request.app.state.jobs.submit('retrieval_index',body.model_dump(),build,key=check_key(idempotency_key))
     @router.get('/graphs',tags=['service'])
     def graphs():
         from .agents import LeaderAgent
