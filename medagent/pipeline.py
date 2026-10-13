@@ -1,18 +1,26 @@
-from .domain import DomainModel, tasks_for_request, validate_request
-from .common import ROOT, digest, write_json, read_json
-import uuid
+import concurrent.futures
+from .common import ROOT, read_json
+from .domain import validate_request
+from .provider import LocalModelClient
+from .harness import AgentHarness
+from .leader import LeaderAgent, SpecialtyAgent
 
 
 class Pipeline:
     def __init__(self, client=None):
-        self.client = client
+        self.client = client or LocalModelClient()
 
     def run(self, request):
         text, _ = validate_request(request)
-        tasks = tasks_for_request(request)
-        results = {t: DomainModel(t, self.client).run(text) for t in tasks}
-        report = {'run_id': uuid.uuid4().hex, 'version': read_json(ROOT/'configs/prototype.json')['version'],
-                  'status': 'needs_review', 'routing_mode': 'manual', 'tasks': tasks,
-                  'document': {'text': text, 'sha256': digest(text)}, 'results': results}
-        write_json(ROOT/'runtime/prototype_runs'/(report['run_id']+'.json'), report)
-        return report
+        settings = read_json(ROOT/'configs/prototype.json')
+        harness = AgentHarness()
+        leader = LeaderAgent(self.client, settings['specialties'])
+        document = leader.organize(text)
+        tasks = leader.route(request, text)
+        harness.log('leader.route', 'finished', tasks=tasks)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {t: pool.submit(harness.call, t, SpecialtyAgent(t,self.client).run, text) for t in tasks}
+            results = {t: f.result() for t, f in futures.items()}
+        return harness.save({'version': settings['version'], 'status': 'needs_review',
+                             'document': document, 'tasks': tasks, 'results': results,
+                             'summary': leader.aggregate(results)})
