@@ -51,51 +51,33 @@ def root_factors(value):
     return value
 
 
+
 class DomainModel:
-    def __init__(self, task, client=None):
-        self.task = task
-        self.client = client or LocalModelClient()
+    def __init__(self,task,client=None):self.task,self.client=task,client or LocalModelClient()
 
-    def run(self, text):
-        if self.task == 'crack':
-            return self.crack(text)
-        prompt = (ROOT/'prompts/root_canal_legacy.txt').read_text()
-        raw = parse_json(self.client.complete(self.task, BOUNDARY + prompt +
-            '\n本次仅输出 {"personLabel":{患者因素},"toothLabel":[{"position":"原文牙位",'
-            '"isFirst":true,"difficulty":1至4,因素字段:[{"label":"完整枚举","reason":"原文依据"}]}]}。', text))
-        factors = root_factors(raw)
-        assessments = []
-        for tooth in factors['toothLabel']:
-            grade = tooth.get('difficulty')
-            if grade is not None and (type(grade) is not int or grade not in (1, 2, 3, 4)):
-                raise ValueError('模型输出的根管难度不合法')
-            assessments.append({'tooth': tooth_key(tooth['position']), 'grade': grade,
-                                'assessment_origin': 'domain_model',
-                                'status': 'assessed' if grade is not None else 'incomplete'})
-        return {'status': 'needs_review', 'task': self.task, 'factors': factors,
-                'assessments': assessments, 'issues': [], 'source_sha256': digest(text)}
+    def extract(self,text,correction=None):
+        from .rules import PERSON,FIRST,REPEAT
+        if self.task=='root_canal':
+            taxonomy=read_json(ROOT/'schemas/root_taxonomy.json')
+            template={'personLabel':{f:[] for f in PERSON},'toothLabel':[{'position':'原文患牙编号','isFirst':True,**{f:[] for f in dict.fromkeys(FIRST+REPEAT)}}]}
+            prompt='抽取患者级及患牙级因素。患者级因素共享；初治使用'+','.join(FIRST)+'；再治使用'+','.join(REPEAT)+'。因素值为 [{"label":"完整枚举","reason":"原文依据"}]；所有字段必须返回，未知用空数组。只输出：'+json.dumps(template,ensure_ascii=False)+'。完整词表：'+json.dumps(taxonomy,ensure_ascii=False)
+        elif self.task=='crack':
+            prompt=(ROOT/'prompts/crack_legacy.txt').read_text()
+        else:raise ValueError('unsupported_domain_model')
+        raw=parse_json(self.client.complete(self.task,BOUNDARY+prompt+
+            '\n仅抽取因素，禁止生成 difficulty、总分、等级；这些由独立规则引擎执行。',
+            json.dumps({'case_text':text,'validation_feedback':correction},ensure_ascii=False)))
+        if self.task=='root_canal':
+            raw=root_factors(raw)
+            if any(f not in raw['personLabel'] for f in PERSON):raise ValueError('missing_patient_schema_fields')
+            for tooth in raw['toothLabel']:
+                if any(f not in tooth for f in (FIRST if tooth['isFirst'] else REPEAT)):raise ValueError('missing_tooth_schema_fields')
+                # Legacy fine-tuned output may include a grade. It is discarded;
+                # no model grade is allowed to enter the scoring result.
+                tooth.pop('difficulty',None)
+        return raw
 
-    def crack(self,text):
-        rules=read_json(ROOT/'schemas/crack_rules.json')
-        prompt=(ROOT/'prompts/crack_legacy.txt').read_text()
-        raw=parse_json(self.client.complete('crack',BOUNDARY+prompt+
-            '\n此版由模型完成加分、扣分、封顶与等级计算：'+json.dumps(rules,ensure_ascii=False)+
-            '\nStrong对应总分>=45，Moderate对应15至44，其余Low_Confidence。'
-            '\n输出 {"factors":[原契约患牙对象],"assessments":[{"tooth":"患牙编号","score":数值,"grade":"Strong|Moderate|Low_Confidence"}]}。',text))
-        if not isinstance(raw,dict) or not isinstance(raw.get('factors'),list) or not raw['factors'] or not isinstance(raw.get('assessments'),list):raise ValueError('invalid_crack_output')
-        seen=set()
-        for tooth in raw['factors']:
-            if not isinstance(tooth,dict):raise ValueError('invalid_crack_tooth')
-            pos=tooth_key(tooth.get('患牙编号',''))
-            if not pos or pos in seen:raise ValueError('missing_or_duplicate_crack_tooth')
-            seen.add(pos)
-            for field in rules['points']:
-                if not isinstance(tooth.get(field),list):raise ValueError('invalid_crack_factor_field')
-        graded=set()
-        for item in raw['assessments']:
-            if not isinstance(item,dict) or item.get('grade') not in {'Strong','Moderate','Low_Confidence'} or type(item.get('score')) not in (int,float):raise ValueError('invalid_crack_grade')
-            tooth=tooth_key(item.get('tooth',''))
-            if tooth not in seen or tooth in graded:raise ValueError('crack_grade_tooth_mismatch')
-            graded.add(tooth);item['assessment_origin']='domain_model'
-        if seen!=graded:raise ValueError('missing_crack_assessment')
-        return {'task':'crack','status':'needs_review',**raw,'issues':[],'source_sha256':digest(text)}
+    def run(self,text,correction=None):
+        from .rules import assess
+        result=assess(self.task,self.extract(text,correction))
+        return {**result,'status':'needs_review','task':self.task,'source_sha256':digest(text)}
