@@ -1,4 +1,5 @@
 """LangGraph orchestration: a leader graph and registry-driven bounded specialty subgraphs."""
+from .settings import configured_path
 import copy
 import json
 import operator
@@ -17,7 +18,7 @@ from .common import ROOT,digest,parse_json,write_json,read_json
 from .provider import LocalModelClient
 from .consult_contracts import FACT_PROMPT, validate_facts, REGISTRY
 from .routing import NEEDS_PROMPT, ROUTE_PROMPT, needs_view, validate_needs, selected_tasks, task_scopes
-from .retrieval import KnowledgeIndex
+from .retrieval import create_index
 from .skills import BOUNDARY,DocumentParseSkill,ReviewSkill,SymptomExtractSkill,KnowledgeSearchSkill
 
 
@@ -152,8 +153,9 @@ class LeaderState(TypedDict,total=False):
 
 class LeaderAgent:
     def __init__(self,client=None,runtime=None,checkpointer=None,review_policy=None,extraction_policy=None):
-        self.client=client or LocalModelClient();self.runtime=runtime or ROOT/'runtime/runs'
-        policy=read_json(ROOT/'configs/agent.json')
+        self.client=client or LocalModelClient();self.runtime=runtime or configured_path('graph_dir')
+        from .settings import get_settings
+        policy=get_settings().data['agent']
         review_policy=review_policy or policy['review_policy']
         extraction_policy=extraction_policy or policy['extraction_policy']
         self.graph_version=policy['graph_version']
@@ -171,7 +173,7 @@ class LeaderAgent:
             extraction=TrainingAlignedExtractSkill(self.client)
         elif extraction_policy!='original':raise ValueError('invalid_extraction_policy')
         self.policies={'review':review_policy,'extraction':extraction_policy}
-        self.skills={s.name:s for s in [DocumentParseSkill(self.client),review,extraction,KnowledgeSearchSkill(KnowledgeIndex(ROOT/'knowledge'))]}
+        self.skills={s.name:s for s in [DocumentParseSkill(self.client),review,extraction,KnowledgeSearchSkill(create_index())]}
         from .disease_agents import DiseaseAgent
         self.specialists={t:SpecialtyAgent(t,self.skills) if t in {'root_canal','crack'} else DiseaseAgent(t,self.client) for t in REGISTRY}
         self._connection=None
@@ -258,7 +260,9 @@ class LeaderAgent:
 
     def _parse(self,state):
         request=state['request'];text=request.get('text','');images=request.get('images',[])
-        if not isinstance(text,str) or len(text)>100000 or not isinstance(images,list) or len(images)>8:raise ValueError('invalid_document_size_or_type')
+        from .settings import get_settings
+        limits=get_settings().data['limits']
+        if not isinstance(text,str) or len(text)>limits['record_chars'] or not isinstance(images,list) or len(images)>limits['images']:raise ValueError('invalid_document_size_or_type')
         doc=self.skills['document_parse'].run(text,images)
         return {'document':{'text':doc['text'],'method':doc['method'],'sha256':digest(doc['text'])},'issues':doc['issues'],
             'trace':[event('document_parse','done',sha256=digest(doc['text']))]}

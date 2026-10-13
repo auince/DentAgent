@@ -1,8 +1,9 @@
 """Shared source-based urgent referral gate for serving and trajectory environments."""
 import re
+from .settings import get_settings
 
 RULE_VERSION='nhs-oral-triage-phrases-v3-colloquial-swallowing'
-SOURCE='https://www.nhs.uk/conditions/dental-abscess/'
+SOURCE=get_settings().data['references']['urgent_referral']
 DIFFICULTY=re.compile(r'呼吸[^，。；！？\n]{0,12}(?:困难|费力|费劲|吃力)|(?:吞咽|吞口水|咽口水|吞唾液|咽唾液)[^，。；！？\n]{0,12}(?:困难|费力|费劲|吃力|很难(?!受))|喘不过气|(?:吞|咽)不下(?:口水|唾液)')
 
 

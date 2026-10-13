@@ -1,4 +1,5 @@
 """Patient consultation: bounded learned policy loop implemented with LangGraph."""
+from .settings import configured_path
 import concurrent.futures
 import json
 import re
@@ -11,7 +12,8 @@ from .common import ROOT, read_json, write_json, parse_json, digest
 from .consult_contracts import (REGISTRY, FACT_PROMPT, LEADER_PROMPT, EXPERT_PROMPT,
     ANSWER_PROMPT, VISION_PROMPT, validate_facts, merge_facts, validate_action, visible_messages)
 from .provider import LocalModelClient,CALL_METADATA
-from .retrieval import KnowledgeIndex
+from .retrieval import create_index
+from .settings import get_settings
 from .sessions import SessionStore
 from .routing import NEEDS_PROMPT, needs_view, validate_needs
 from .evidence import validate_expert, evidence_report
@@ -47,12 +49,9 @@ MODEL_TRACE=contextvars.ContextVar('oral_model_trace',default=None)
 
 class ConsultationAgent:
     def __init__(self, client=None, config=None, index=None):
-        self.config=config or read_json(ROOT/'configs/consultation.json')
+        self.config=config or get_settings().consultation()
         self.client=client or LocalModelClient(self.config['models'])
-        self.index=index or KnowledgeIndex(ROOT/'knowledge')
-        retrieval=self.config.get('retrieval',{})
-        if retrieval.get('type','bm25')!='bm25' or retrieval.get('reranker_path'):
-            raise ValueError('prototype_supports_bm25_retrieval_only')
+        self.index=index or create_index()
         g=StateGraph(ConsultationState)
         for name,fn in [('parse',self.parse),('triage',self.triage),('assess_needs',self.assess_needs),('policy',self.policy),('tools',self.tools),('answer',self.answer)]:g.add_node(name,fn)
         g.add_edge(START,'parse');g.add_edge('parse','triage')
@@ -176,7 +175,7 @@ class ConsultationAgent:
         issues=list(s['issues']);a=s.get('action',{'action':'refer'})
         if s.get('urgent'):
             response={'answer':'你描述了呼吸或吞咽困难等需要紧急处理的情况，请立即联系当地急救或前往急诊，避免等待线上咨询。',
-                'status':'urgent_referral','citations':['https://www.nhs.uk/conditions/dental-abscess/']}
+                'status':'urgent_referral','citations':[get_settings().data['references']['urgent_referral']]}
         elif a['action']=='ask':
             response={'answer':a['question'],'status':'awaiting_patient','citations':[]}
         else:
@@ -197,7 +196,7 @@ class ConsultationAgent:
 class ConsultationService:
     def __init__(self,agent=None,store=None,runtime=None):
         self.agent=agent or ConsultationAgent();self.store=store or SessionStore()
-        self.runtime=runtime or ROOT/'runtime/runs'
+        self.runtime=runtime or configured_path('conversation_runs_dir')
 
     def run(self,cid,request,rid=None,reserved=None):
         rid=rid or uuid.uuid4().hex
@@ -207,7 +206,8 @@ class ConsultationService:
         try:
             text=request.get('text','');images=request.get('images',[]);record=request.get('record_text','')
             if not isinstance(text,str) or not isinstance(record,str) or not isinstance(images,list) or not (text.strip() or record.strip() or images):raise ValueError('empty_or_invalid_message')
-            if len(text)+len(record)>16000 or len(images)>8:raise ValueError('input_too_large')
+            limits=get_settings().data['limits']
+            if len(text)+len(record)>limits['chat_chars'] or len(images)>limits['images']:raise ValueError('input_too_large')
             mid=uuid.uuid4().hex
             sources=old['sources']|{mid:{'text':text,'kind':'patient_report','time':time.time()}}
             if record:sources[mid+'-record']={'text':record,'kind':'clinical_record','time':time.time()}

@@ -13,7 +13,7 @@ def tokens(text):
 
 
 class KnowledgeIndex:
-    def __init__(self, directory):
+    def __init__(self, directory, chunk_size=800, chunk_stride=600):
         self.chunks = []
         for path in sorted(Path(directory).rglob("*")):
             if path.suffix not in (".md", ".txt"):
@@ -21,8 +21,8 @@ class KnowledgeIndex:
             text = path.read_text(encoding="utf-8")
             version = digest(text)
             source_url=re.search(r'^Source:\s*(https?://\S+)',text,re.M)
-            for start in range(0, len(text), 600):
-                chunk = text[start:start+800]
+            for start in range(0, len(text), chunk_stride):
+                chunk = text[start:start+chunk_size]
                 self.chunks.append({"id": f"{path.stem}:{start}:{version[:10]}",
                     "source": str(path.relative_to(directory)), "sha256": version,
                     "source_url":source_url.group(1) if source_url else None,
@@ -61,3 +61,24 @@ class KnowledgeIndex:
             if score > 0:
                 hits.append({**{k:v for k,v in c.items() if k != "tf"}, "score": round(score,5)})
         return sorted(hits, key=lambda x: (-x["score"], x["id"]))[:limit]
+
+
+class RetrievalService:
+    def __init__(self,settings):
+        self.settings=settings
+        cfg=settings.data['retrieval']
+        if cfg['mode']!='bm25':raise ValueError('V8_supports_bm25_only')
+        self.index=KnowledgeIndex(settings.path('knowledge_dir'),cfg['chunk_size'],cfg['chunk_stride'])
+    def search_with_trace(self,query,task=None,limit=None):
+        limit=limit or self.settings.data['retrieval']['top_k']
+        hits=self.index.search(query,task,limit)
+        return {'results':[dict(hit,retrieval='bm25') for hit in hits],
+            'retrieval':{'mode':'bm25','corpus_chunks':len(self.index.chunks),'task':task,'limit':limit}}
+    def search(self,query,task=None,limit=None):return self.search_with_trace(query,task,limit)['results']
+    def describe(self):return {'mode':'bm25','chunks':len(self.index.chunks),'inference_executed_at_startup':False}
+
+from functools import lru_cache
+@lru_cache(maxsize=1)
+def create_index():
+    from .settings import get_settings
+    return RetrievalService(get_settings())

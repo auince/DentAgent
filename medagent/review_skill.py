@@ -1,4 +1,5 @@
 """Leader chooses image tools; anchored corrections trigger fresh specialty analysis."""
+from .settings import configured_path
 import json
 from .common import parse_json
 from .image_tools import ImageTools
@@ -9,7 +10,7 @@ class ImageReviewSkill:
     def __init__(self,client):
         from .common import ROOT
         self.client=client
-        self.policy=(ROOT/'skills/information_review/SKILL.md').read_text()
+        self.policy=(configured_path('skills_dir')/'information_review/SKILL.md').read_text()
 
     def run(self,text,images=()):
         if not images:

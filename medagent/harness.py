@@ -1,4 +1,5 @@
 """AgentHarness: per-run immutable input identity, tool tracing and failure isolation."""
+from .settings import configured_path
 import threading
 import time
 import uuid
@@ -6,8 +7,8 @@ from .common import ROOT, digest, write_json
 
 
 class AgentHarness:
-    def __init__(self):
-        self.run_id = uuid.uuid4().hex
+    def __init__(self,run_id=None):
+        self.run_id = run_id or uuid.uuid4().hex
         self.events = []
         self.lock = threading.Lock()
 
@@ -30,5 +31,5 @@ class AgentHarness:
 
     def save(self, report):
         report.update(run_id=self.run_id, trace=list(self.events))
-        write_json(ROOT/'runtime/prototype_runs'/(self.run_id+'.json'), report)
+        write_json(configured_path('assessment_runs_dir')/(self.run_id+'.json'), report)
         return report

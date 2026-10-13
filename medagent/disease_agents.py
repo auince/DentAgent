@@ -1,4 +1,5 @@
 """Two disease-specific subgraphs using source facts and bounded explanation."""
+from .settings import configured_path
 import json
 import operator
 import time
@@ -7,7 +8,7 @@ from langgraph.graph import START,END,StateGraph
 from .common import ROOT,parse_json,digest
 from .consult_contracts import REGISTRY,FACT_PROMPT,EXPERT_PROMPT,validate_facts
 from .evidence import validate_expert
-from .retrieval import KnowledgeIndex
+from .retrieval import create_index
 
 
 def trace_event(step,status='done',**details):
@@ -33,7 +34,7 @@ class DiseaseAgent:
     def __init__(self,task,client):
         if task not in {'pulp_periapical','periodontal'}:raise ValueError('unsupported_disease_agent')
         self.task,self.client=task,client
-        self.index=KnowledgeIndex(ROOT/'knowledge')
+        self.index=create_index()
         graph=StateGraph(DiseaseState)
         for name,fn in [('extract',self.extract),('validate',self.validate),('retrieve',self.retrieve),('ground',self.ground),('explain',self.explain),('finish',self.finish)]:graph.add_node(name,fn)
         graph.add_edge(START,'extract');graph.add_edge('extract','validate')

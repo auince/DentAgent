@@ -1,3 +1,4 @@
+from .settings import configured_path
 import re
 from .common import ROOT, labels, norm, option_key, parse_json, read_json, tooth_key
 
@@ -32,7 +33,7 @@ def assess(task, value):
     results = []
     seen = set()
     if task == 'crack':
-        rules = read_json(ROOT/'schemas/crack_rules.json')
+        rules = read_json(configured_path('schemas_dir')/'crack_rules.json')
         for tooth in value:
             pos = tooth_key(tooth.get('患牙编号',''))
             if not pos or pos in seen:
@@ -54,7 +55,7 @@ def assess(task, value):
             results.append({'tooth':pos,'score':total,'grade':grade,'module_scores':scores,
                             'rule_version':rules['version']})
     elif task == 'root_canal':
-        taxonomy = read_json(ROOT/'schemas/root_taxonomy.json')
+        taxonomy = read_json(configured_path('schemas_dir')/'root_taxonomy.json')
         person = value['personLabel']
         for tooth in value['toothLabel']:
             pos = tooth_key(tooth.get('position',''))
@@ -99,7 +100,7 @@ def factor_items(task, value):
     value = normalize_output(task,value)
     out = []
     if task == 'crack':
-        fields = read_json(ROOT/'schemas/crack_rules.json')['points']
+        fields = read_json(configured_path('schemas_dir')/'crack_rules.json')['points']
         for tooth in value:
             out += [(tooth_key(tooth['患牙编号']),f,x) for f in fields for x in labels(tooth.get(f,[]))]
     else:

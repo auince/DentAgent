@@ -1,4 +1,5 @@
 """SQLite session transactions serialize turns across threads and processes."""
+from .settings import configured_path
 import json
 import sqlite3
 import time
@@ -9,7 +10,7 @@ class SessionBusy(ValueError): pass
 
 class SessionStore:
     def __init__(self, path=None):
-        self.path = path or ROOT/'runtime/consultation/sessions.sqlite'
+        self.path = path or configured_path('sessions_db')
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.connect() as c:
             c.execute('PRAGMA journal_mode=WAL')
@@ -91,6 +92,16 @@ class SessionStore:
         return {'patient_id':state['patient_id'],'memory':list(memory.values()),'saved_only_explicitly_selected_facts':True}
 
     def forget(self,cid):
-        state=self.get(cid)
-        with self.connect() as c:c.execute('UPDATE profiles SET data=?,updated=? WHERE id=?',('[]',time.time(),state['patient_id']))
-        return {'patient_id':state['patient_id'],'memory':[]}
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('SELECT data FROM sessions WHERE id=?',(cid,)).fetchone()
+            if row is None:raise KeyError('conversation_not_found')
+            patient_id=json.loads(row[0])['patient_id'];related=[]
+            for sid,data,active in c.execute('SELECT id,data,active_run FROM sessions'):
+                state=json.loads(data)
+                if state.get('patient_id')==patient_id:
+                    if active:raise SessionBusy('patient_memory_in_active_consultation')
+                    state['historical_memory']=[];related.append((json.dumps(state,ensure_ascii=False),time.time(),sid))
+            c.execute('UPDATE profiles SET data=?,updated=? WHERE id=?',('[]',time.time(),patient_id))
+            c.executemany('UPDATE sessions SET data=?,updated=? WHERE id=?',related)
+        return {'patient_id':patient_id,'memory':[],'conversation_history_deleted':False}

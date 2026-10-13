@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
-from .common import ROOT, read_json
+from .settings import get_settings
 
 CALL_METADATA=contextvars.ContextVar('local_model_call_metadata',default=None)
 
@@ -19,14 +19,15 @@ class ModelUnavailable(RuntimeError):
 
 class LocalModelClient:
     def __init__(self, config=None):
-        self.config = config or read_json(ROOT / "configs/models.json")
+        self.config = config or get_settings().model_roles()
 
     def complete(self, role, system, text, images=(), response_format=None):
         CALL_METADATA.set(None)
         cfg = self.config[role]
-        endpoint = os.environ.get(cfg.get("endpoint_env", ""), cfg["endpoint"])
-        if urlsplit(endpoint).hostname not in {"localhost", "127.0.0.1", "::1"}:
-            raise ModelUnavailable("模型端点必须为本机回环地址；通过 SSH 转发连接远端服务")
+        endpoint = cfg["endpoint"]
+        parts=urlsplit(endpoint)
+        if parts.scheme not in {"http","https"} or not parts.hostname or parts.username or parts.password:
+            raise ModelUnavailable("invalid_configured_model_endpoint")
         content = [{"type": "text", "text": text}]
         for image in images:
             if not isinstance(image, str) or not image.startswith(("data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,")):
@@ -47,7 +48,7 @@ class LocalModelClient:
             headers["Authorization"] = "Bearer " + key
         retries = cfg.get('retries', 1)
         for attempt in range(retries + 1):
-            req = urllib.request.Request(endpoint.rstrip("/") + "/chat/completions", json.dumps(body).encode(), headers)
+            req = urllib.request.Request(endpoint.rstrip("/") + cfg["chat_path"], json.dumps(body).encode(), headers)
             try:
                 with urllib.request.urlopen(req, timeout=cfg.get("timeout", 180)) as response:
                     result = json.load(response)

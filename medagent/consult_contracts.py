@@ -1,9 +1,10 @@
 """Versioned contracts shared by serving, augmentation, rewards and evaluation."""
+from .settings import configured_path
 import json
 import re
 from .common import ROOT, read_json, digest
 
-REGISTRY = {a['id']: a for a in read_json(ROOT/'configs/specialties.json')['agents'] if a.get('enabled',True)}
+REGISTRY = {a['id']: a for a in read_json(configured_path('specialties_file'))['agents'] if a.get('enabled',True)}
 FACT_PROMPT = '''将患者原话整理成JSON：{"facts":[{"name":"症状或因素","value":"原文信息","status":"positive|negative|unknown|conflict","location":null,"tooth":null,"quote":"原文连续引文","source_id":"消息ID"}],"intent":"咨询意图"}。
 只提取可观察事实；未说的内容不补全；部位含糊时保留原话，不能猜FDI牙位；否定、未知、冲突分别保留。所有quote必须来自给定消息。临床检查只来自明确提交的检查记录。无长推理。'''
 LEADER_PROMPT = '''你是口腔咨询Leader。根据事实、已有结果、剩余预算决定下一步，仅输出一个JSON动作。
