@@ -1,0 +1,253 @@
+{
+  "version": "aap-efp-2018-staging-grading-v1",
+  "reviewed_on": "2026-10-13",
+  "status": "reference_based_rules_not_clinically_validated",
+  "sources": {
+    "staging_grading": "https://www.perio.org/wp-content/uploads/2019/08/Staging-and-Grading-Periodontitis.pdf",
+    "case_definition": "https://www.efp.org/fileadmin/uploads/efp/Documents/Campaigns/New_Classification/Reports/Consensus_report__Workgroup_2__Papapanou_et_al-2018-Journal_of_Clinical_Periodontology.pdf",
+    "clinical_workflow": "https://www.efp.org/fileadmin/uploads/efp/Documents/Campaigns/New_Classification/Guidance_Notes/report-02b.pdf",
+    "urgency": "https://www.nhs.uk/conditions/dental-abscess/"
+  },
+  "fields": {
+    "interdental_cal_two_nonadjacent": {
+      "type": "boolean",
+      "label": "检查明确至少两颗不相邻牙邻面附着丧失",
+      "objective": true,
+      "scope": "patient"
+    },
+    "buccal_oral_cal_case": {
+      "type": "boolean",
+      "label": "检查明确至少两牙颊/舌侧CAL≥3mm并伴牙周袋，口袋深度记录≥3mm，边界需临床复核",
+      "objective": true,
+      "scope": "patient"
+    },
+    "nonperiodontal_causes_excluded": {
+      "type": "boolean",
+      "label": "已排除创伤退缩、颈部龋、第三磨牙、牙髓来源及纵根折等其他CAL原因",
+      "objective": true,
+      "scope": "patient"
+    },
+    "special_periodontitis_excluded": {
+      "type": "boolean",
+      "label": "已排除坏死性及系统性疾病直接表现等单独分类疾病",
+      "objective": true,
+      "scope": "patient"
+    },
+    "full_mouth_assessment": {
+      "type": "boolean",
+      "label": "完整全口牙周图及影像已评估",
+      "objective": true,
+      "scope": "patient"
+    },
+    "complexity_review_complete": {
+      "type": "boolean",
+      "label": "临床已完成全部分期复杂度评估，缺失因素不得填true",
+      "objective": true,
+      "scope": "patient"
+    },
+    "true_periodontal_pockets": {
+      "type": "boolean",
+      "label": "明确是真性牙周袋，已排除假性袋",
+      "objective": true,
+      "scope": "patient"
+    },
+    "vertical_defect_ge3": {
+      "type": "boolean",
+      "label": "垂直骨缺损≥3mm",
+      "objective": true,
+      "scope": "patient"
+    },
+    "furcation_ii_iii": {
+      "type": "boolean",
+      "label": "根分叉II/III级",
+      "objective": true,
+      "scope": "patient"
+    },
+    "moderate_ridge_defect": {
+      "type": "boolean",
+      "label": "中度牙槽嵴缺损",
+      "objective": true,
+      "scope": "patient"
+    },
+    "stage_iv_rehabilitation_complexity": {
+      "type": "boolean",
+      "label": "牙周病相关且需复杂重建的咀嚼障碍/继发咬合创伤/严重嵴缺损/咬合崩溃漂移等IV期因素",
+      "objective": true,
+      "scope": "patient"
+    },
+    "diabetes": {
+      "type": "boolean",
+      "label": "糖尿病确诊",
+      "objective": true,
+      "scope": "patient"
+    },
+    "max_interdental_cal_mm": {
+      "type": "number",
+      "label": "全口最重部位邻面CAL",
+      "unit": "mm",
+      "min": 0,
+      "max": 20,
+      "scope": "patient",
+      "objective": true
+    },
+    "max_rbl_percent": {
+      "type": "number",
+      "label": "全口最重患牙骨丧失占根长百分数，不是小数比例",
+      "unit": "%",
+      "min": 0,
+      "max": 100,
+      "scope": "patient",
+      "objective": true
+    },
+    "periodontitis_tooth_loss": {
+      "type": "number",
+      "label": "确认因牙周炎缺失牙数量，其他原因不计",
+      "unit": "teeth",
+      "min": 0,
+      "max": 32,
+      "scope": "patient",
+      "objective": true
+    },
+    "max_ppd_mm": {
+      "type": "number",
+      "label": "全口最大探诊袋深",
+      "unit": "mm",
+      "min": 0,
+      "max": 20,
+      "scope": "patient",
+      "objective": true
+    },
+    "prior_stage": {
+      "type": "number",
+      "label": "治疗前已确立分期，用于防止治疗后降期",
+      "unit": "stage",
+      "min": 0,
+      "max": 4,
+      "scope": "patient",
+      "objective": true
+    },
+    "progression_5y_mm": {
+      "type": "number",
+      "label": "真实五年纵向CAL或RBL丧失量，不能年化外推",
+      "unit": "mm",
+      "min": 0,
+      "max": 20,
+      "scope": "patient",
+      "objective": true
+    },
+    "age_years": {
+      "type": "number",
+      "label": "年龄",
+      "unit": "years",
+      "min": 0,
+      "max": 120,
+      "scope": "patient",
+      "objective": false
+    },
+    "cigarettes_per_day": {
+      "type": "number",
+      "label": "每日吸烟支数，明确不吸烟才填0",
+      "unit": "cigarettes/day",
+      "min": 0,
+      "max": 200,
+      "scope": "patient",
+      "objective": false
+    },
+    "hba1c_percent": {
+      "type": "number",
+      "label": "糖尿病患者糖化血红蛋白HbA1c",
+      "unit": "%",
+      "min": 0,
+      "max": 25,
+      "scope": "patient",
+      "objective": true
+    },
+    "affected_teeth_percent": {
+      "type": "number",
+      "label": "全口受累牙比例",
+      "unit": "%",
+      "min": 0,
+      "max": 100,
+      "scope": "patient",
+      "objective": true
+    },
+    "breathing_difficulty": {
+      "type": "boolean",
+      "label": "当前呼吸困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "speaking_difficulty": {
+      "type": "boolean",
+      "label": "当前说话困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "swallowing_difficulty": {
+      "type": "boolean",
+      "label": "当前吞咽困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "eye_swelling_or_pain": {
+      "type": "boolean",
+      "label": "当前眼部肿痛",
+      "objective": false,
+      "scope": "patient"
+    },
+    "sudden_vision_change": {
+      "type": "boolean",
+      "label": "当前突然视力变化",
+      "objective": false,
+      "scope": "patient"
+    },
+    "extensive_oral_swelling": {
+      "type": "boolean",
+      "label": "当前明显广泛口腔肿胀",
+      "objective": false,
+      "scope": "patient"
+    },
+    "marked_mouth_opening_difficulty": {
+      "type": "boolean",
+      "label": "当前明显张口困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "pus": {
+      "type": "boolean",
+      "label": "明确牙龈/牙周流脓（作为紧急就诊线索，不单独确诊脓肿）",
+      "objective": false,
+      "scope": "patient"
+    },
+    "swelling": {
+      "type": "boolean",
+      "label": "明确牙龈/牙周肿胀（作为及时就诊线索）",
+      "objective": false,
+      "scope": "patient"
+    }
+  },
+  "thresholds": {
+    "cal_stage_ii": 3,
+    "cal_stage_iii": 5,
+    "rbl_stage_ii": 15,
+    "rbl_stage_iii": 33,
+    "tooth_loss_stage_iii": 1,
+    "tooth_loss_stage_iv": 5,
+    "ppd_stage_ii": 4,
+    "ppd_stage_iii": 6,
+    "grade_b_ratio": 0.25,
+    "grade_c_ratio": 1.0,
+    "grade_c_5y_mm": 2,
+    "smoking_grade_c": 10,
+    "diabetes_grade_c_hba1c": 7.0,
+    "generalized_percent": 30
+  },
+  "limitations": [
+    "Patient-level stage/grade require case gate and differential exclusions.",
+    "CAL primary; RBL fallback. Fractional CAL between published integer ranges needs clinical review.",
+    "Missing complexity/loss/full-mouth data yields only minimum stage.",
+    "Unknown risk modifiers yields minimum grade, not evidence of low risk.",
+    "No downgrade of historical stage after treatment.",
+    "Buccal/oral case definition boundaries differ (consensus >=3mm pocket, EFP decision tree >3mm); explicit clinician case finding is required here."
+  ]
+}

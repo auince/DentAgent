@@ -1,4 +1,4 @@
-"""Specialties extract symptoms and explain provisional risk; the Leader owns RAG and synthesis."""
+"""Specialties extract symptoms and explain reference-based risk; the Leader owns RAG and synthesis."""
 import json
 import operator
 import time
@@ -6,6 +6,7 @@ from typing import TypedDict,Annotated
 from langgraph.graph import START,END,StateGraph
 from .common import parse_json,digest
 from .consult_contracts import REGISTRY,FACT_PROMPT,validate_facts
+from .clinical_rules import TASKS,extraction_contract,validate_clinical_facts,assess_clinical
 
 
 def trace_event(step,status='done',**details):
@@ -32,10 +33,10 @@ class DiseaseAgent:
         if task not in REGISTRY:raise ValueError('unsupported_disease_agent')
         self.task,self.client=task,client
         graph=StateGraph(DiseaseState)
-        for name,fn in [('extract',self.extract),('validate',self.validate),('ground',self.ground),('explain',self.explain),('finish',self.finish)]:graph.add_node(name,fn)
+        for name,fn in [('extract',self.extract),('validate',self.validate),('ground',self.ground),('rule_assess',self.rule_assess),('explain',self.explain),('finish',self.finish)]:graph.add_node(name,fn)
         graph.add_edge(START,'extract');graph.add_edge('extract','validate')
         graph.add_conditional_edges('validate',lambda s:'ground' if not s.get('error') else 'extract' if s['attempt']<2 else 'finish')
-        graph.add_edge('ground','explain');graph.add_edge('explain','finish');graph.add_edge('finish',END)
+        graph.add_edge('ground','rule_assess');graph.add_edge('rule_assess','explain');graph.add_edge('explain','finish');graph.add_edge('finish',END)
         self.graph=graph.compile(checkpointer=False,name='specialty_'+task)
 
     def extract(self,s):
@@ -44,7 +45,7 @@ class DiseaseAgent:
         try:
             raw=parse_json(self.client.complete(self.task,FACT_PROMPT+
                 '\n你是'+REGISTRY[self.task]['name']+'结构化症状提取Agent。仅提取本专业相关的症状、患者级背景、患牙因素。'
-                '仅使用给定来源和明确牙位。保留否定、未知、冲突，不生成诊断、疾病方向、评分、知识检索或治疗建议。',
+                '仅使用给定来源和明确牙位。保留否定、未知、冲突，不生成诊断、疾病方向、评分、知识检索或治疗建议。'+extraction_contract(self.task),
                 json.dumps({'sources':sources,'scope':s.get('scope',[]),'validation_feedback':s.get('error')},ensure_ascii=False)))
             return {'attempt':attempt,'raw':raw,'sources':sources,'error':'','failed':False,
                     'trace':[trace_event(self.task+'.extract',attempt=attempt)]}
@@ -54,6 +55,7 @@ class DiseaseAgent:
     def validate(self,s):
         try:
             facts,issues=validate_facts(s['raw'],s['sources'])
+            facts=validate_clinical_facts(self.task,facts)
             if issues or not facts:raise ValueError('invalid_or_empty_source_facts:'+','.join(issues))
             if s.get('scope'):
                 allowed={str(t).removesuffix('牙') for t in s['scope']}
@@ -67,17 +69,27 @@ class DiseaseAgent:
                    'clinical_entailment_verified':False} for f in s['facts']]
         return {'evidence':evidence,'trace':[trace_event(self.task+'.ground')]}
 
+    def rule_assess(self,s):
+        result={'factors':s['facts'],'facts':s['facts'],'sources':s['sources'],'evidence':s['evidence'],'issues':[]}
+        if self.task in TASKS:
+            result['clinical_rule_assessment']=assess_clinical(self.task,s['facts'])
+            result['risk_assessments']=result['clinical_rule_assessment']['risk_assessments']
+            result['rule_owner']='independent_rule_engine'
+            result['issues'].append({'code':'reference_rules_require_clinical_review'})
+        return {'result':result,'trace':[trace_event(self.task+'.rule_assess',
+            'done' if self.task in TASKS else 'not_applicable')]}
+
     def explain(self,s):
         from .specialty_explanation import SpecialtyExplanation
-        result={'factors':s['facts'],'facts':s['facts'],'sources':s['sources'],'evidence':s['evidence'],'issues':[]}
+        result=dict(s['result'])
         try:
             explanation=SpecialtyExplanation(self.task,self.client).run(result,s['text'])
             result.update(analysis_explanation=explanation,risk_assessments=explanation['risk_assessments'])
-            result['issues'].append({'code':'provisional_risk_requires_clinical_review'})
+            if self.task not in TASKS:result['issues'].append({'code':'insufficient_rule_factors_require_clinical_review'})
         except Exception as exc:
-            result.update(risk_assessments=[])
+            result.setdefault('risk_assessments',[])
             result['issues'].append({'code':'specialty_explanation_failed','detail':str(exc)[:240]})
-        return {'result':result,'trace':[trace_event(self.task+'.explain','done' if result['risk_assessments'] else 'failed',risk_count=len(result['risk_assessments']))]}
+        return {'result':result,'trace':[trace_event(self.task+'.explain','done' if result.get('analysis_explanation') else 'failed',risk_count=len(result['risk_assessments']))]}
 
     def finish(self,s):
         common={'task':self.task,'role':'structured_symptom_and_risk_analysis','source_sha256':digest(s['text']),

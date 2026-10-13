@@ -1,0 +1,452 @@
+{
+  "version": "aae-2009-terms-2013-guide-candidate-v1",
+  "reviewed_on": "2026-10-13",
+  "sources": {
+    "diagnostic_terms": "https://www.aae.org/specialty/wp-content/uploads/sites/2/2023/12/Fall2013-EndoDiagnosis.pdf",
+    "urgency": "https://www.nhs.uk/conditions/dental-abscess/",
+    "proposed_update": "https://www.aae.org/specialty/diagnostic-terminology-stakeholder-input/"
+  },
+  "status": "reference_based_candidate_rules_not_clinically_validated",
+  "fields": {
+    "spontaneous_pain": {
+      "type": "boolean",
+      "label": "自发痛",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "thermal_pain": {
+      "type": "boolean",
+      "label": "冷热诱发痛",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "lingering_after_stimulus": {
+      "type": "boolean",
+      "label": "撤除冷热刺激后疼痛持续",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "brief_provoked_pain": {
+      "type": "boolean",
+      "label": "短暂冷/甜刺激痛，撤刺激后迅速消失",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "normal_comparative_pulp_response": {
+      "type": "boolean",
+      "label": "对照牙正常且患牙牙髓测试反应正常",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "cold_nonresponsive": {
+      "type": "boolean",
+      "label": "冷测无反应",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "ept_nonresponsive": {
+      "type": "boolean",
+      "label": "电活力测试无反应",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "controls_responsive": {
+      "type": "boolean",
+      "label": "对照牙测试有反应",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "false_negative_causes_excluded": {
+      "type": "boolean",
+      "label": "临床已排除外伤/钙化等测试假阴性因素",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "percussion_pain": {
+      "type": "boolean",
+      "label": "叩诊痛",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "palpation_pain": {
+      "type": "boolean",
+      "label": "根尖触诊痛",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "biting_pain": {
+      "type": "boolean",
+      "label": "咬合痛",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "apical_radiolucency": {
+      "type": "boolean",
+      "label": "根尖透射影",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "normal_apical_image": {
+      "type": "boolean",
+      "label": "根尖硬骨板及牙周膜影像正常",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "pulpal_origin_supported": {
+      "type": "boolean",
+      "label": "已检查支持根尖病变为牙髓来源",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "pus": {
+      "type": "boolean",
+      "label": "脓液",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "swelling": {
+      "type": "boolean",
+      "label": "肿胀",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "rapid_onset": {
+      "type": "boolean",
+      "label": "急性快速发作",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "sinus_tract_to_tooth": {
+      "type": "boolean",
+      "label": "窦道已追踪定位本牙",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "diffuse_apical_radiopacity": {
+      "type": "boolean",
+      "label": "根尖弥漫阻射影",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "inflammatory_origin_supported": {
+      "type": "boolean",
+      "label": "检查支持阻射影为炎症来源",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "obturated_canals": {
+      "type": "boolean",
+      "label": "既往根管已充填",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "partial_endodontic_therapy": {
+      "type": "boolean",
+      "label": "既往部分牙髓治疗",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "deep_caries_or_exposure": {
+      "type": "boolean",
+      "label": "深龋或露髓",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "asymptomatic": {
+      "type": "boolean",
+      "label": "明确无症状",
+      "objective": false,
+      "scope": "tooth"
+    },
+    "reversible_etiology_supported": {
+      "type": "boolean",
+      "label": "检查支持可处理的刺激病因，如龋/牙本质暴露",
+      "objective": true,
+      "scope": "tooth"
+    },
+    "breathing_difficulty": {
+      "type": "boolean",
+      "label": "当前呼吸困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "speaking_difficulty": {
+      "type": "boolean",
+      "label": "当前说话困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "swallowing_difficulty": {
+      "type": "boolean",
+      "label": "当前吞咽困难",
+      "objective": false,
+      "scope": "patient"
+    },
+    "eye_swelling_or_pain": {
+      "type": "boolean",
+      "label": "当前眼部肿痛",
+      "objective": false,
+      "scope": "patient"
+    },
+    "sudden_vision_change": {
+      "type": "boolean",
+      "label": "当前突然视力变化",
+      "objective": false,
+      "scope": "patient"
+    },
+    "extensive_oral_swelling": {
+      "type": "boolean",
+      "label": "当前明显广泛口腔肿胀",
+      "objective": false,
+      "scope": "patient"
+    },
+    "marked_mouth_opening_difficulty": {
+      "type": "boolean",
+      "label": "当前明显张口困难",
+      "objective": false,
+      "scope": "patient"
+    }
+  },
+  "candidate_patterns": [
+    {
+      "id": "normal_pulp",
+      "label": "牙髓正常",
+      "axis": "pulp",
+      "all": [
+        [
+          "asymptomatic",
+          true
+        ],
+        [
+          "normal_comparative_pulp_response",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "reversible_pulpitis",
+      "label": "可复性牙髓炎",
+      "axis": "pulp",
+      "all": [
+        [
+          "brief_provoked_pain",
+          true
+        ],
+        [
+          "spontaneous_pain",
+          false
+        ],
+        [
+          "reversible_etiology_supported",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "symptomatic_irreversible_pulpitis",
+      "label": "症状性不可复性牙髓炎",
+      "axis": "pulp",
+      "all": [
+        [
+          "thermal_pain",
+          true
+        ]
+      ],
+      "any": [
+        [
+          "lingering_after_stimulus",
+          true
+        ],
+        [
+          "spontaneous_pain",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "pulp_necrosis",
+      "label": "牙髓坏死",
+      "axis": "pulp",
+      "all": [
+        [
+          "cold_nonresponsive",
+          true
+        ],
+        [
+          "ept_nonresponsive",
+          true
+        ],
+        [
+          "controls_responsive",
+          true
+        ],
+        [
+          "false_negative_causes_excluded",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "previously_treated",
+      "label": "既往根管治疗",
+      "axis": "pulp",
+      "all": [
+        [
+          "obturated_canals",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "previously_initiated",
+      "label": "既往开始牙髓治疗",
+      "axis": "pulp",
+      "all": [
+        [
+          "partial_endodontic_therapy",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "normal_apical_tissues",
+      "label": "根尖周组织正常",
+      "axis": "apical",
+      "all": [
+        [
+          "percussion_pain",
+          false
+        ],
+        [
+          "palpation_pain",
+          false
+        ],
+        [
+          "normal_apical_image",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "symptomatic_apical_periodontitis",
+      "label": "症状性根尖周炎",
+      "axis": "apical",
+      "all": [],
+      "any": [
+        [
+          "percussion_pain",
+          true
+        ],
+        [
+          "palpation_pain",
+          true
+        ],
+        [
+          "biting_pain",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "asymptomatic_apical_periodontitis",
+      "label": "无症状性根尖周炎",
+      "axis": "apical",
+      "all": [
+        [
+          "apical_radiolucency",
+          true
+        ],
+        [
+          "pulpal_origin_supported",
+          true
+        ],
+        [
+          "percussion_pain",
+          false
+        ],
+        [
+          "palpation_pain",
+          false
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "chronic_apical_abscess",
+      "label": "慢性根尖脓肿",
+      "axis": "apical",
+      "all": [
+        [
+          "sinus_tract_to_tooth",
+          true
+        ],
+        [
+          "pus",
+          true
+        ],
+        [
+          "pulpal_origin_supported",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "acute_apical_abscess",
+      "label": "急性根尖脓肿",
+      "axis": "apical",
+      "all": [
+        [
+          "rapid_onset",
+          true
+        ],
+        [
+          "spontaneous_pain",
+          true
+        ],
+        [
+          "pus",
+          true
+        ],
+        [
+          "swelling",
+          true
+        ],
+        [
+          "pulpal_origin_supported",
+          true
+        ]
+      ],
+      "any": []
+    },
+    {
+      "id": "condensing_osteitis",
+      "label": "致密性骨炎",
+      "axis": "apical",
+      "all": [
+        [
+          "diffuse_apical_radiopacity",
+          true
+        ],
+        [
+          "inflammatory_origin_supported",
+          true
+        ]
+      ],
+      "any": []
+    }
+  ],
+  "limitations": [
+    "Patterns are conservative sufficient evidence combinations for candidates, not diagnostic necessities.",
+    "No unified low/moderate/high pulp score.",
+    "Lingering pain is qualitative; 30 seconds is not a diagnostic cutoff.",
+    "No automated asymptomatic irreversible pulpitis or treatment prescription.",
+    "Revised AAE/ESE terminology remains a proposal on the reviewed page."
+  ]
+}
