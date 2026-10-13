@@ -1,0 +1,11 @@
+accelerate==1.15.0
+datasets==5.0.1
+flash-linear-attention==0.5.2
+huggingface_hub==1.33.0
+peft==0.21.2
+pillow==12.3.0
+tokenizers==0.23.2
+torchao==0.18.0
+trackio==0.40.0
+transformers==5.18.0
+trl==1.14.1

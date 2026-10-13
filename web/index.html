@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MedAgent - 口腔临床辅助评估系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+    <style>
+        :root {
+            --primary: #2563EB;
+            --primary-dark: #1D4ED8;
+            --success: #10B981;
+            --warning: #F59E0B;
+            --error: #EF4444;
+            --bg: #F8FAFC;
+            --text: #1E293B;
+            --text-light: #64748B;
+            --border: #E2E8F0;
+            --sidebar: #FFFFFF;
+            --card-bg: #FFFFFF;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            width: 260px;
+            background: var(--sidebar);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            padding: 24px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo h1 {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: -0.5px;
+        }
+
+        .logo p {
+            font-size: 12px;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+
+        .nav {
+            flex: 1;
+            padding: 16px 0;
+            overflow-y: auto;
+        }
+
+        .nav-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .nav-item:hover {
+            background: #F1F5F9;
+        }
+
+        .nav-item.active {
+            background: #EFF6FF;
+            border-left-color: var(--primary);
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .nav-icon {
+            width: 20px;
+            height: 20px;
+        }
+
+        .system-status {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            font-size: 13px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* 主内容区 */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: white;
+            padding: 20px 32px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h2 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            color: var(--text-light);
+            font-size: 14px;
+            margin-top: 4px;
+        }
+
+        .content {
+            flex: 1;
+            padding: 32px;
+            overflow-y: auto;
+        }
+
+        /* 评估表单 */
+        .assessment-form {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 1200px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .form-group {
+            margin-bottom: 28px;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--text);
+            font-size: 15px;
+        }
+
+        .form-textarea {
+            width: 100%;
+            min-height: 220px;
+            padding: 14px;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+            transition: all 0.2s;
+        }
+
+        .form-textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+        }
+
+        .task-selector {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .task-option {
+            padding: 20px;
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .task-option:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.15);
+        }
+
+        .task-option.selected {
+            border-color: var(--primary);
+            background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+        }
+
+        .task-option.selected::before {
+            content: '✓';
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .task-option h4 {
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .task-option p {
+            font-size: 13px;
+            color: var(--text-light);
+            line-height: 1.5;
+        }
+
+        .image-upload {
+            border: 2px dashed var(--border);
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #FAFBFC;
+        }
+
+        .image-upload:hover {
+            border-color: var(--primary);
+            background: #F0F7FF;
+        }
+
+        .image-upload.has-images {
+            border-style: solid;
+            border-color: var(--success);
+            background: #F0FDF4;
+        }
+
+        .image-upload input {
+            display: none;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 15px;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .btn-primary:disabled {
+            background: #94A3B8;
+            cursor: not-allowed;
+        }
+
+        /* 结果卡片 */
+        .result-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 28px;
+            margin-top: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .result-header h3 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        .status-running {
+            background: #FEF3C7;
+            color: #92400E;
+        }
+
+        .status-completed {
+            background: #D1FAE5;
+            color: #065F46;
+        }
+
+        .status-needs_review {
+            background: #FED7AA;
+            color: #9A3412;
+        }
+
+        .status-failed {
+            background: #FEE2E2;
+            color: #991B1B;
+        }
+
+        .result-meta {
+            color: var(--text-light);
+            font-size: 13px;
+            margin-top: 8px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .result-section {
+            margin-top: 28px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        .result-section h4 {
+            margin-bottom: 16px;
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        .assessment-grid {
+            display: grid;
+            gap: 16px;
+        }
+
+        .assessment-item {
+            padding: 16px;
+            background: #F8FAFC;
+            border-radius: 8px;
+            border-left: 3px solid var(--primary);
+        }
+
+        .assessment-item strong {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--text);
+        }
+
+        .evidence-item {
+            padding: 12px;
+            background: #FFFBEB;
+            border-radius: 6px;
+            margin-top: 8px;
+            font-size: 13px;
+            border-left: 2px solid var(--warning);
+        }
+
+        /* 历史记录 */
+        .history-filters {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .filter-input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .history-list {
+            display: grid;
+            gap: 16px;
+        }
+
+        .history-item {
+            background: var(--card-bg);
+            border-radius: 10px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid var(--border);
+        }
+
+        .history-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+
+        .history-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 12px;
+        }
+
+        .history-item-time {
+            font-size: 13px;
+            color: var(--text-light);
+        }
+
+        .history-item-preview {
+            font-size: 14px;
+            color: var(--text-light);
+            line-height: 1.6;
+            max-height: 60px;
+            overflow: hidden;
+        }
+
+        /* 工作流可视化 */
+        .workflow-container {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+
+        .workflow-diagram {
+            margin-top: 24px;
+            padding: 24px;
+            background: #FAFBFC;
+            border-radius: 10px;
+            overflow-x: auto;
+        }
+
+        .page-hidden {
+            display: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-light);
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>MedAgent</h1>
+                <p>口腔临床辅助评估</p>
+            </div>
+            <nav class="nav">
+                <div class="nav-item active" data-page="assessment">
+                    <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    <span>病历评估</span>
+                </div>
+                <div class="nav-item" data-page="history">
+                    <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span>历史记录</span>
+                </div>
+                <div class="nav-item" data-page="workflow">
+                    <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 17a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2z"/>
+                    </svg>
+                    <span>工作流可视化</span>
+                </div>
+            </nav>
+            <div class="system-status">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span>系统运行正常</span>
+                </div>
+                <div style="font-size: 12px; color: var(--text-light);">
+                    API: 127.0.0.1:18100
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main">
+            <!-- 评估页面 -->
+            <div id="assessment-page">
+                <header class="header">
+                    <h2>病历评估</h2>
+                    <p>提交病历文本和图像，获取AI辅助评估结果</p>
+                </header>
+                <div class="content">
+                    <div class="assessment-form">
+                        <div class="form-group">
+                            <label class="form-label">病历内容</label>
+                            <textarea
+                                class="form-textarea"
+                                id="case-text"
+                                placeholder="请输入病历原文，包括主诉、现病史、检查结果、诊断等信息...
+
+示例：
+患者：36牙，自发痛3天
+现病史：36牙3天前出现自发性疼痛，夜间加重，冷热刺激痛
+检查：36牙远中邻面深龋达髓腔，叩痛(+)，冷热刺激痛
+诊断：36牙急性牙髓炎
+治疗计划：根管治疗"></textarea>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">评估任务</label>
+                            <div class="task-selector">
+                                <div class="task-option" data-task="root_canal">
+                                    <h4>根管治疗难度评估</h4>
+                                    <p>评估根管治疗操作难度等级（1-4级），分析影响因素如根管解剖、牙周状况、感染程度等</p>
+                                </div>
+                                <div class="task-option" data-task="crack">
+                                    <h4>牙隐裂风险评估</h4>
+                                    <p>评估牙隐裂风险等级，分析咬合受力、临床体征、裂纹波及等因素</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">病历图像（可选）</label>
+                            <div class="image-upload" id="image-upload">
+                                <input type="file" id="image-input" accept="image/*" multiple>
+                                <p style="font-size: 16px; margin-bottom: 8px;">📷 点击上传或拖拽图像文件</p>
+                                <p style="font-size: 13px; color: var(--text-light);">支持 PNG、JPEG、WebP 格式，最多8张</p>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-primary" id="submit-btn">开始评估</button>
+
+                        <div id="result-container"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 历史记录页面 -->
+            <div id="history-page" class="page-hidden">
+                <header class="header">
+                    <h2>历史记录</h2>
+                    <p>查看和管理所有评估记录</p>
+                </header>
+                <div class="content">
+                    <div class="history-filters">
+                        <input type="text" class="filter-input" id="history-search" placeholder="搜索病历内容或运行ID...">
+                        <select class="filter-input" id="history-status" style="flex: 0 0 200px;">
+                            <option value="">全部状态</option>
+                            <option value="completed">已完成</option>
+                            <option value="needs_review">需要复核</option>
+                            <option value="failed">失败</option>
+                        </select>
+                    </div>
+                    <div class="history-list" id="history-list">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <p>加载历史记录中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 工作流页面 -->
+            <div id="workflow-page" class="page-hidden">
+                <header class="header">
+                    <h2>工作流可视化</h2>
+                    <p>查看LangGraph执行流程和Agent决策路径</p>
+                </header>
+                <div class="content">
+                    <div class="workflow-container">
+                        <p style="margin-bottom: 16px; color: var(--text-light);">
+                            选择一个评估记录查看其工作流执行详情，或查看系统整体架构
+                        </p>
+                        <button class="btn btn-primary" id="show-architecture-btn">查看系统架构</button>
+                        <div class="workflow-diagram" id="workflow-diagram">
+                            <p style="text-align: center; color: var(--text-light);">请先提交评估或选择历史记录</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // 初始化Mermaid
+        mermaid.initialize({ startOnLoad: false, theme: 'default' });
+
+        // 导航切换
+        document.querySelectorAll('.nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const page = item.dataset.page;
+
+                document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+
+                document.querySelectorAll('[id$="-page"]').forEach(p => p.classList.add('page-hidden'));
+                document.getElementById(`${page}-page`).classList.remove('page-hidden');
+
+                // 加载历史记录
+                if (page === 'history') {
+                    loadHistory();
+                }
+            });
+        });
+
+        // 任务选择
+        let selectedTasks = [];
+        document.querySelectorAll('.task-option').forEach(option => {
+            option.addEventListener('click', () => {
+                const task = option.dataset.task;
+                option.classList.toggle('selected');
+
+                if (selectedTasks.includes(task)) {
+                    selectedTasks = selectedTasks.filter(t => t !== task);
+                } else {
+                    selectedTasks.push(task);
+                }
+            });
+        });
+
+        // 图像上传
+        const imageUpload = document.getElementById('image-upload');
+        const imageInput = document.getElementById('image-input');
+        let uploadedImages = [];
+
+        imageUpload.addEventListener('click', () => imageInput.click());
+        imageUpload.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            imageUpload.style.borderColor = 'var(--primary)';
+        });
+        imageUpload.addEventListener('dragleave', () => {
+            imageUpload.style.borderColor = 'var(--border)';
+        });
+        imageUpload.addEventListener('drop', (e) => {
+            e.preventDefault();
+            imageUpload.style.borderColor = 'var(--border)';
+            imageInput.files = e.dataTransfer.files;
+            imageInput.dispatchEvent(new Event('change'));
+        });
+
+        imageInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files).slice(0, 8);
+            Promise.all(files.map(file => {
+                return new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.readAsDataURL(file);
+                });
+            })).then(images => {
+                uploadedImages = images;
+                imageUpload.classList.add('has-images');
+                imageUpload.innerHTML = `
+                    <p style="font-size: 16px; margin-bottom: 8px;">✓ 已上传 ${images.length} 张图片</p>
+                    <p style="font-size: 13px; color: var(--text-light);">点击重新上传</p>
+                `;
+            });
+        });
+
+        // 提交评估
+        document.getElementById('submit-btn').addEventListener('click', async () => {
+            const text = document.getElementById('case-text').value.trim();
+
+            if (!text) {
+                alert('请输入病历内容');
+                return;
+            }
+
+            if (selectedTasks.length === 0) {
+                alert('请选择至少一个评估任务');
+                return;
+            }
+
+            const submitBtn = document.getElementById('submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = '评估中...';
+
+            try {
+                const response = await fetch('/api/runs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        text: text,
+                        tasks: selectedTasks,
+                        images: uploadedImages
+                    })
+                });
+
+                const data = await response.json();
+                if (data.run_id) {
+                    pollResult(data.run_id);
+                } else {
+                    throw new Error('未获取到运行ID');
+                }
+            } catch (error) {
+                alert('提交失败: ' + error.message);
+                submitBtn.disabled = false;
+                submitBtn.textContent = '开始评估';
+            }
+        });
+
+        // 轮询结果
+        async function pollResult(runId) {
+            const container = document.getElementById('result-container');
+            container.innerHTML = '<div class="result-card"><div class="loading"><div class="spinner"></div><p>正在处理...</p></div></div>';
+
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/runs/${runId}`);
+                    const data = await response.json();
+
+                    displayResult(data);
+
+                    if (['completed', 'needs_review', 'failed'].includes(data.status)) {
+                        clearInterval(interval);
+                        document.getElementById('submit-btn').disabled = false;
+                        document.getElementById('submit-btn').textContent = '开始评估';
+                    }
+                } catch (error) {
+                    clearInterval(interval);
+                    container.innerHTML = `<div class="result-card"><p style="color: var(--error);">获取结果失败: ${error.message}</p></div>`;
+                }
+            }, 2000);
+        }
+
+        // 显示结果
+        function displayResult(data) {
+            const container = document.getElementById('result-container');
+            const statusClass = `status-${data.status}`;
+            const statusText = {
+                'running': '运行中',
+                'completed': '已完成',
+                'needs_review': '需要复核',
+                'failed': '失败'
+            }[data.status] || data.status;
+
+            let html = `
+                <div class="result-card">
+                    <div class="result-header">
+                        <h3>评估结果</h3>
+                        <span class="status-badge ${statusClass}">${statusText}</span>
+                    </div>
+                    <div class="result-meta">运行ID: ${data.run_id}</div>
+            `;
+
+            if (data.results) {
+                for (const [task, result] of Object.entries(data.results)) {
+                    const taskName = task === 'root_canal' ? '根管治疗难度' : '牙隐裂风险';
+                    html += `<div class="result-section"><h4>${taskName}</h4>`;
+
+                    if (result.status === 'failed') {
+                        html += `<p style="color: var(--error);">评估失败: ${result.error || '未知错误'}</p>`;
+                    } else if (result.assessments) {
+                        html += `<div class="assessment-grid">`;
+                        result.assessments.forEach(assessment => {
+                            html += `<div class="assessment-item">`;
+                            if (typeof assessment === 'object') {
+                                for (const [key, value] of Object.entries(assessment)) {
+                                    html += `<strong>${key}:</strong> ${JSON.stringify(value)}<br>`;
+                                }
+                            } else {
+                                html += assessment;
+                            }
+                            html += `</div>`;
+                        });
+                        html += `</div>`;
+                    }
+
+                    if (result.evidence && result.evidence.length > 0) {
+                        html += `<div style="margin-top: 16px;"><strong>证据支持：</strong>`;
+                        result.evidence.forEach(ev => {
+                            if (ev.quote) {
+                                html += `<div class="evidence-item">"${ev.quote}"</div>`;
+                            }
+                        });
+                        html += `</div>`;
+                    }
+
+                    html += `</div>`;
+                }
+            }
+
+            html += `</div>`;
+            container.innerHTML = html;
+        }
+
+        // 加载历史记录
+        async function loadHistory() {
+            const listContainer = document.getElementById('history-list');
+            try {
+                // 这里应该调用实际的API
+                listContainer.innerHTML = '<div class="loading"><p>暂无历史记录，请先提交评估</p></div>';
+            } catch (error) {
+                listContainer.innerHTML = `<div class="result-card"><p style="color: var(--error);">加载失败: ${error.message}</p></div>`;
+            }
+        }
+
+        // 显示系统架构
+        document.getElementById('show-architecture-btn').addEventListener('click', async () => {
+            const diagram = document.getElementById('workflow-diagram');
+            diagram.innerHTML = '<div class="loading"><div class="spinner"></div><p>生成架构图...</p></div>';
+
+            const mermaidCode = `
+graph TD
+    Start[开始] --> Parse[文档解析<br/>DocumentParseSkill]
+    Parse --> Route[任务路由<br/>LeaderAgent]
+    Route --> Review[信息审校<br/>ReviewSkill]
+    Route --> Root[根管Agent]
+    Route --> Crack[牙隐裂Agent]
+
+    Root --> Extract1[因素提取]
+    Extract1 --> Retrieve1[知识检索]
+    Retrieve1 --> Ground1[证据定位]
+    Ground1 --> Explain1[生成说明]
+
+    Crack --> Extract2[因素提取]
+    Extract2 --> Retrieve2[知识检索]
+    Retrieve2 --> Ground2[证据定位]
+    Ground2 --> Explain2[生成说明]
+
+    Review --> Reconcile[结果核对]
+    Explain1 --> Reconcile
+    Explain2 --> Reconcile
+
+    Reconcile --> Final[最终报告]
+
+    style Parse fill:#EFF6FF
+    style Route fill:#DBEAFE
+    style Review fill:#FEF3C7
+    style Root fill:#D1FAE5
+    style Crack fill:#FED7AA
+    style Final fill:#E0E7FF
+            `;
+
+            try {
+                const { svg } = await mermaid.render('mermaid-diagram', mermaidCode);
+                diagram.innerHTML = svg;
+            } catch (error) {
+                diagram.innerHTML = `<p style="color: var(--error);">生成失败: ${error.message}</p>`;
+            }
+        });
+    </script>
+</body>
+</html>
