@@ -9,14 +9,14 @@ import contextvars
 from typing import TypedDict
 from langgraph.graph import START, END, StateGraph
 from .common import ROOT, read_json, write_json, parse_json, digest
-from .consult_contracts import (REGISTRY, FACT_PROMPT, LEADER_PROMPT, EXPERT_PROMPT,
+from .consult_contracts import (REGISTRY, FACT_PROMPT, LEADER_PROMPT,
     ANSWER_PROMPT, VISION_PROMPT, validate_facts, merge_facts, validate_action, visible_messages)
 from .provider import LocalModelClient,CALL_METADATA
 from .retrieval import create_index
 from .settings import get_settings
 from .sessions import SessionStore
 from .routing import NEEDS_PROMPT, needs_view, validate_needs
-from .evidence import validate_expert, evidence_report
+from .evidence import evidence_report
 from .triage import urgent_fact_ids
 
 class ConsultationState(TypedDict, total=False):
@@ -43,31 +43,48 @@ class ConsultationState(TypedDict, total=False):
     needs: dict
     retry_policy: bool
     historical_memory: list
+    retrievals: dict
+    leader_analysis: dict
+    record_review: dict
+    source_changed: bool
 
 def _json(x): return json.dumps(x,ensure_ascii=False)
 MODEL_TRACE=contextvars.ContextVar('oral_model_trace',default=None)
+
+class TracedClient:
+    """Share the role boundary services while preserving per-request model traces."""
+    def __init__(self,agent):self.agent=agent
+    def complete(self,role,prompt,text,images=(),response_format=None):
+        return self.agent.complete(role,prompt,text,images)
+
 
 class ConsultationAgent:
     def __init__(self, client=None, config=None, index=None):
         self.config=config or get_settings().consultation()
         self.client=client or LocalModelClient(self.config['models'])
         self.index=index or create_index()
+        from .leader_analysis import LeaderAnalysis
+        self.traced_client=TracedClient(self)
+        self.analysis=LeaderAnalysis(self.traced_client,self.index)
         g=StateGraph(ConsultationState)
         for name,fn in [('parse',self.parse),('triage',self.triage),('assess_needs',self.assess_needs),('policy',self.policy),('tools',self.tools),('answer',self.answer)]:g.add_node(name,fn)
         g.add_edge(START,'parse');g.add_edge('parse','triage')
         g.add_conditional_edges('triage',lambda s:'answer' if s.get('urgent') else 'assess_needs')
         g.add_edge('assess_needs','policy')
         g.add_conditional_edges('policy',lambda s:'policy' if s.get('retry_policy') else 'tools' if s['action']['action'] in {'dispatch','retrieve','review_image'} else 'answer')
-        g.add_conditional_edges('tools',lambda s:'triage' if s['action']['action']=='review_image' else 'policy')
+        g.add_conditional_edges('tools',lambda s:'triage' if s['action']['action']=='review_image' or s.get('source_changed') else 'policy')
         g.add_edge('answer',END)
         self.graph=g.compile(name=self.config['version'])
 
     def call(self,role,prompt,data,images=()):
+        return parse_json(self.complete(role,prompt,_json(data),images))
+
+    def complete(self,role,prompt,text,images=()):
         started=time.monotonic();record={'role':role,'model':self.config['models'].get(role,{}).get('model'),'prompt_sha256':digest(prompt)}
         CALL_METADATA.set(None)
         try:
-            raw=self.client.complete(role,prompt,_json(data),images);record['raw_output']=raw
-            value=parse_json(raw);record['status']='parsed';return value
+            raw=self.client.complete(role,prompt,text,images);record['raw_output']=raw
+            parse_json(raw);record['status']='parsed';return raw
         except Exception as exc:
             record['status']='failed';record['error']=str(exc)[:160];raise
         finally:
@@ -79,7 +96,7 @@ class ConsultationAgent:
 
     def parse(self,s):
         sources=dict(s['sources']);issues=list(s['issues']);text=s['text']
-        if s.get('images'):
+        if s.get('images') and s['message_id']+'-record' not in sources:
             doc=self.call('vision',VISION_PROMPT,{'instruction':'转写本次上传病历'},s['images'])
             if not isinstance(doc,dict) or not isinstance(doc.get('text'),str):raise ValueError('invalid_transcription')
             sources[s['message_id']+'-image']={'text':doc['text'],'kind':'clinical_record','time':time.time()}
@@ -127,52 +144,107 @@ class ConsultationAgent:
             'trace':s['trace']+[{'step':'leader','action':action}]}
 
     def expert(self,task,s):
-        spec=REGISTRY[task]
-        prompt=EXPERT_PROMPT.format(specialty=spec['name'],scope=spec['scope'])
-        result=self.call(spec['adapter'],prompt,{k:s[k] for k in ('facts','sources','knowledge')})
-        result['reference_validation']=validate_expert(result,s)
-        if 'legacy_factors' in result:
-            if 'rule_assess' not in spec['tools']:raise ValueError('rule_tool_not_permitted')
-            from .rules import assess
-            result['rule_assessment']=assess(spec['legacy_task'],result['legacy_factors'])
-        result['validation']='schema_and_reference_ids_only'
-        return result
+        from .disease_agents import DiseaseAgent
+        from .routing import task_scopes
+        scopes=task_scopes(s['needs'],s['facts'],[task])
+        output=DiseaseAgent(task,self.traced_client).invoke_sources(s['sources'],scopes.get(task))
+        return output['result']
+
+    def review_record(self,s):
+        from .review_skill import ImageReviewSkill
+        current={k:v for k,v in s['sources'].items() if k.startswith(s['message_id']) and v['kind']=='clinical_record'}
+        text='\n'.join(v['text'] for v in current.values())
+        review=ImageReviewSkill(self.traced_client).run(text,s['images'])
+        return current,review
+
+    def apply_review(self,s,current,review):
+        changed=review['text']!='\n'.join(v['text'] for v in current.values())
+        updates={'record_review':review,'image_reviewed':True,'source_changed':changed}
+        if changed:
+            sid=s['message_id']+'-review'
+            source={sid:{'text':review['text'],'kind':'clinical_record','time':time.time(),
+                'replaces':list(current),'sha256':digest(review['text'])}}
+            extracted=self.call('frontend',FACT_PROMPT,{'sources':source})
+            facts,bad=validate_facts(extracted,source)
+            if bad:raise ValueError('reviewed_facts_validation:'+','.join(bad))
+            remaining=[f for f in s['facts'] if f['source_id'] not in current]
+            # Superseded OCR facts are removed, never merged with their corrections.
+            remaining_ids={f['id'] for f in remaining}
+            remaining=[{**fact,'conflicts_with':[i for i in fact.get('conflicts_with',[]) if i in remaining_ids]} for fact in remaining]
+            updates.update(sources={k:v for k,v in s['sources'].items() if k not in current}|source,
+                           facts=merge_facts(remaining,facts))
+        return updates
 
     def tools(self,s):
         a=s['action'];kind=a['action'];cost=validate_action(a,s,self.config)
         obs=list(s['observations']);experts=dict(s['experts']);knowledge=list(s['knowledge']);issues=list(s['issues'])
-        updates={}
+        retrievals=dict(s.get('retrievals',{}));updates={'source_changed':False}
         try:
             if kind=='dispatch':
+                review_needed=bool(s.get('images')) and not s.get('image_reviewed')
+                review_allowed=review_needed and s['tool_count']+cost+1<=self.config['max_tools']
                 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    review_job=pool.submit(contextvars.copy_context().run,self.review_record,s) if review_allowed else None
+                    if review_job:cost+=1
                     jobs={t:pool.submit(contextvars.copy_context().run,self.expert,t,s) for t in a['tasks']}
                     for task,job in jobs.items():
                         try:
-                            experts[task]=job.result();obs.append({'tool':'expert','task':task,'status':'ok'})
+                            experts[task]=job.result();obs.append({'tool':'symptom_extract','task':task,'status':experts[task]['status']})
+                            if experts[task]['status']=='failed':issues.append('expert_failed:'+task)
                         except Exception as exc:
                             experts[task]={'error':str(exc)[:160],'status':'failed'}
-                            obs.append({'tool':'expert','task':task,'status':'failed','error':str(exc)[:160]});issues.append('expert_failed:'+task)
+                            obs.append({'tool':'symptom_extract','task':task,'status':'failed','error':str(exc)[:160]});issues.append('expert_failed:'+task)
+                    if review_job:
+                        try:
+                            current,review=review_job.result();updates.update(self.apply_review(s,current,review))
+                            if not review['approved']:issues.append('unresolved_document_review')
+                            obs.append({'tool':'image_review','status':'ok','parallel_with_extraction':True,
+                                'source_changed':updates['source_changed'],'details':review})
+                        except Exception as exc:
+                            updates.update(image_reviewed=True,record_review={'approved':False,'error':str(exc)[:160]})
+                            if review_job and 'review' in locals() and review.get('text')!='\n'.join(v['text'] for v in current.values()):
+                                experts={};knowledge=[];retrievals={}
+                            issues.append('image_review_failed');obs.append({'tool':'image_review','status':'failed','error':str(exc)[:160]})
+                if review_needed and not review_allowed:issues.append('image_review_budget_exhausted')
+                if updates.get('source_changed'):
+                    experts={};knowledge=[];retrievals={}
+                    fresh={**s,**updates,'experts':{},'knowledge':[],'issues':issues,'observations':obs}
+                    need_update=self.assess_needs(fresh);updates['needs']=need_update['needs']
+                    issues=need_update.get('issues',issues)
+                    from .routing import selected_tasks
+                    rerun=[t for t in a['tasks'] if t in selected_tasks(updates['needs'])]
+                    fresh.update(needs=updates['needs'])
+                    for task in rerun:
+                        if s['tool_count']+cost>=self.config['max_tools']:
+                            issues.append('review_reflow_budget_exhausted');break
+                        cost+=1
+                        try:experts[task]=self.expert(task,fresh)
+                        except Exception as exc:experts[task]={'status':'failed','error':str(exc)[:160]}
+                    obs.append({'tool':'review_reflow','invalidated_previous_experts':True,'rerun_tasks':list(experts)})
             elif kind=='retrieve':
-                hits=self.index.search(a['query'],None if a['task']=='all' else a['task'])
-                knowledge=list({x['id']:x for x in knowledge+hits}.values())
-                obs.append({'tool':'knowledge_search','task':a['task'],'count':len(hits)})
+                targets=[t for t,r in experts.items() if r.get('status')!='failed'] if a['task']=='all' else [a['task']]
+                for task in targets:
+                    value=self.analysis.retrieve(task,experts[task])
+                    retrievals[task]={'input_version':experts[task]['input_version'],**value}
+                knowledge=list({x['id']:x for v in retrievals.values() for x in v['knowledge']}.values())
+                obs.append({'tool':'knowledge_search','owner':'leader','tasks':targets,'query_basis':'structured_symptoms','count':len(knowledge)})
             elif kind=='review_image':
-                doc=self.call('vision',VISION_PROMPT,{'previous_text':s['sources'],'instruction':'局部核对，不补造'},s['images'])
-                if not isinstance(doc.get('text'),str):raise ValueError('invalid_review')
-                sid=s['message_id']+'-review'
-                source={sid:{'text':doc['text'],'kind':'clinical_record','time':time.time()}}
-                extracted=self.call('frontend',FACT_PROMPT,{'sources':source})
-                facts,bad=validate_facts(extracted,source)
-                updates={'sources':s['sources']|source,'facts':merge_facts(s['facts'],facts),'image_reviewed':True}
-                # Earlier draft experts must be recomputed against changed clinical facts.
-                experts={};issues+=bad;obs.append({'tool':'image_review','status':'ok','expert_results_invalidated':True})
+                current,review=self.review_record(s);updates.update(self.apply_review(s,current,review))
+                if not review['approved']:issues.append('unresolved_document_review')
+                if updates['source_changed']:experts={};knowledge=[];retrievals={}
+                obs.append({'tool':'image_review','status':'ok','expert_results_invalidated':updates['source_changed'],'details':review})
         except Exception as exc:
+            if kind=='review_image' and 'review' in locals() and review.get('text')!='\n'.join(v['text'] for v in current.values()):
+                experts={};knowledge=[];retrievals={}
+                updates.update(image_reviewed=True,record_review={**review,'approved':False,'error':str(exc)[:160]})
             obs.append({'tool':kind,'status':'failed','error':str(exc)[:160]});issues.append('tool_failed:'+kind)
-        return {**updates,'experts':experts,'knowledge':knowledge,'observations':obs,'issues':issues,
+        return {**updates,'experts':experts,'knowledge':knowledge,'retrievals':retrievals,'observations':obs,'issues':issues,
             'tool_count':s['tool_count']+cost,'trace':s['trace']+[{'step':kind,'cost':cost}]}
 
     def answer(self,s):
         issues=list(s['issues']);a=s.get('action',{'action':'refer'})
+        analyses={};knowledge=[];tool_count=s['tool_count']
+        observations=list(s['observations'])
         if s.get('urgent'):
             response={'answer':'你描述了呼吸或吞咽困难等需要紧急处理的情况，请立即联系当地急救或前往急诊，避免等待线上咨询。',
                 'status':'urgent_referral','citations':[get_settings().data['references']['urgent_referral']]}
@@ -180,15 +252,34 @@ class ConsultationAgent:
             response={'answer':a['question'],'status':'awaiting_patient','citations':[]}
         else:
             try:
-                response=self.call('answer',ANSWER_PROMPT,{k:s[k] for k in ('facts','experts','knowledge','observations')}|{'decision':a})
+                from .consult_contracts import finish_issue
+                pending=finish_issue(s,self.config)
+                if pending:issues.append(pending)
+                from .routing import selected_tasks
+                for task,extraction in s['experts'].items():
+                    if task not in selected_tasks(s.get('needs',{'candidates':[]})):continue
+                    if extraction.get('input_version')!=digest(json.dumps(s['sources'],sort_keys=True,ensure_ascii=False)):
+                        issues.append('stale_specialty_result:'+task);continue
+                    cached=s.get('retrievals',{}).get(task)
+                    if cached and cached['input_version']!=extraction.get('input_version'):cached=None
+                    allowed=tool_count<self.config['max_tools']
+                    if not cached and extraction.get('status')!='failed' and allowed:tool_count+=1
+                    analyses[task]=self.analysis.organize(task,extraction,retrieved=cached,retrieve_allowed=allowed)
+                    if analyses[task].get('issues'):issues.append('leader_analysis_incomplete:'+task)
+                    knowledge.extend(analyses[task].get('knowledge',[]))
+                knowledge=list({hit['id']:hit for hit in knowledge}.values())
+                observations.append({'tool':'leader_analysis','tasks':list(analyses),'query_basis':'structured_symptoms'})
+                response=self.call('answer',ANSWER_PROMPT,{'facts':s['facts'],'experts':s['experts'],
+                    'leader_analysis':analyses,'knowledge':knowledge,'observations':observations,'decision':a})
                 if not isinstance(response,dict) or not isinstance(response.get('answer'),str) or not isinstance(response.get('citations'),list):raise ValueError('invalid_answer')
-                valid={k['id'] for k in s['knowledge']}
+                valid={k['id'] for k in knowledge}
                 if any(c not in valid for c in response['citations']):raise ValueError('invalid_citation')
                 response['status']='needs_review' if issues else 'answered'
             except Exception:
                 response={'answer':'目前的信息不足以形成可靠的咨询分析，请补充症状持续时间、诱因和已有检查记录，或由口腔医生进一步检查。','status':'needs_review','citations':[]}
                 issues.append('answer_unavailable')
-        return {'response':response,'issues':issues,'trace':s['trace']+[{'step':'answer','status':response['status']}],
+        return {'response':response,'issues':issues,'leader_analysis':analyses,'knowledge':knowledge,
+            'observations':observations,'tool_count':tool_count,'trace':s['trace']+[{'step':'answer','status':response['status']}],
             'question_count':s['question_count']+int(a['action']=='ask'),
             'asked_fields':s.get('asked_fields',[])+([a['field']] if a['action']=='ask' else []),
             'asked_questions':s['asked_questions']+([a['question']] if a['action']=='ask' else [])}
@@ -215,7 +306,8 @@ class ConsultationService:
                 'asked_fields':old.get('asked_fields',[]),
                 'messages':old['messages']+[{'role':'user','content':text,'id':mid}],
                 'experts':{},'knowledge':[],'observations':[],'trace':[],'issues':[],
-                'tool_count':0,'action_count':0,'image_reviewed':False,'urgent':False}
+                'tool_count':0,'action_count':0,'image_reviewed':False,'urgent':False,
+                'retrievals':{},'leader_analysis':{},'record_review':{},'source_changed':False}
             write_json(self.runtime/(rid+'.json'),{'run_id':rid,'conversation_id':cid,'status':'running'})
             result=self.agent.graph.invoke(initial,{'recursion_limit':30})
             saved={k:result[k] for k in ('sources','facts','messages','question_count','asked_questions','asked_fields')}
@@ -229,7 +321,12 @@ class ConsultationService:
             report['patient_id']=old['patient_id']
             report['structured_symptoms']=[{k:f.get(k) for k in ('id','name','value','status','location','tooth','quote','source_id')} for f in result['facts']]
             report['symptom_text']='\n'.join(f"{f['name']}：{f.get('value','')}（{f['status']}；原话：{f['quote']}）" for f in result['facts'])
-            report['pre_diagnosis_document']={'kind':'auxiliary_pre_diagnosis','symptoms':report['structured_symptoms'],'specialty_documents':result['experts'],'assessment_needs':report['assessment_needs'],'unresolved':result['issues'],'confirmed_diagnosis':False}
+            report['pre_diagnosis_document']={'kind':'auxiliary_pre_diagnosis','symptoms':report['structured_symptoms'],'specialty_extractions':result['experts'],'specialty_documents':{t:r.get('analysis_explanation',{}) for t,r in result['experts'].items()},'leader_analysis':result.get('leader_analysis',{}),
+                'closest_disease_documents':{t:r.get('closest_disease_documents',[]) for t,r in result.get('leader_analysis',{}).items()},'assessment_needs':report['assessment_needs'],'unresolved':result['issues'],'confirmed_diagnosis':False}
+            report['specialty_results']=result['experts']
+            report['leader_analysis']=result.get('leader_analysis',{})
+            report['closest_disease_documents']=report['pre_diagnosis_document']['closest_disease_documents']
+            report['record_review']=result.get('record_review',{})
             report['evidence']=evidence_report(result)
             report.update(result['response']);report.update(run_id=rid,conversation_id=cid,elapsed_seconds=round(time.monotonic()-start,3),graph_version=self.agent.config['version'])
             report['model_calls']=calls

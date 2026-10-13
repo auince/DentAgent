@@ -1,4 +1,4 @@
-"""Model extraction; V1-V3 let the domain model supply the assessment."""
+"""Domain-model factor extraction; scoring remains an independent rules service."""
 from .settings import configured_path,get_settings
 import json
 from .common import ROOT, parse_json, tooth_key, digest, read_json
@@ -81,6 +81,6 @@ class DomainModel:
         return raw
 
     def run(self,text,correction=None):
-        from .rules import assess
-        result=assess(self.task,self.extract(text,correction))
-        return {**result,'status':'needs_review','task':self.task,'source_sha256':digest(text)}
+        from .rules import validate_factor_output
+        result=validate_factor_output(self.task,self.extract(text,correction))
+        return {**result,'status':'extracted','task':self.task,'source_sha256':digest(text)}

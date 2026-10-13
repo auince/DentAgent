@@ -27,6 +27,44 @@ def normalize_output(task, value):
     return {'personLabel':person, 'toothLabel':teeth}
 
 
+def validate_factor_output(task, value):
+    """Validate extraction structure/enums without calculating grades or scores."""
+    import copy
+    value=copy.deepcopy(normalize_output(task,value));seen=set();issues=[]
+    if task=='root_canal':
+        taxonomy=read_json(configured_path('schemas_dir')/'root_taxonomy.json')
+        for tooth in value['toothLabel']:
+            pos=tooth_key(tooth.get('position',''))
+            if not pos or pos in seen or type(tooth.get('isFirst')) is not bool:raise ValueError('invalid_tooth_or_treatment_type')
+            seen.add(pos)
+            for key in list(tooth):
+                if key not in {'position','isFirst',*(FIRST if tooth['isFirst'] else REPEAT)}:tooth.pop(key)
+            for obj,fields in [(value['personLabel'],PERSON),(tooth,FIRST if tooth['isFirst'] else REPEAT)]:
+                for field in fields:
+                    if field not in obj or not isinstance(obj[field],list):raise ValueError('missing_or_invalid_field:'+field)
+                    vals=obj[field]
+                    if any(not isinstance(x,(str,dict)) or isinstance(x,dict) and (not isinstance(x.get('label'),str) or not isinstance(x.get('reason'),str)) for x in vals):raise ValueError('invalid_factor_value:'+field)
+                    legal={norm(x) for x in taxonomy[field]}
+                    if any(norm(x) not in legal for x in labels(vals)):raise ValueError('invalid_taxonomy:'+field)
+                    if not vals:issues.append({'tooth':pos,'code':'missing_factor','field':field})
+        value['personLabel']={k:v for k,v in value['personLabel'].items() if k in PERSON}
+    elif task=='crack':
+        rules=read_json(configured_path('schemas_dir')/'crack_rules.json')
+        for tooth in value:
+            pos=tooth_key(tooth.get('患牙编号',''))
+            if not pos or pos in seen:raise ValueError('missing_or_duplicate_tooth')
+            seen.add(pos)
+            for field,choices in rules['points'].items():
+                vals=tooth.get(field);legal={option_key(x) for x in choices}
+                if not isinstance(vals,list) or any(not isinstance(x,str) or option_key(x) not in legal for x in vals):raise ValueError('invalid_taxonomy:'+field)
+                if len(vals)!=len({option_key(x) for x in vals}):raise ValueError('duplicate_option:'+field)
+            # Only the schema's extraction fields may leave the specialty agent.
+            for key in list(tooth):
+                if key not in {'患牙编号',*rules['points']}:tooth.pop(key)
+    else:raise ValueError('unsupported_factor_task')
+    return {'factors':value,'issues':issues}
+
+
 def assess(task, value):
     value = normalize_output(task, value)
     problems = []

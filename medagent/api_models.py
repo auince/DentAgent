@@ -64,3 +64,14 @@ class SearchRequest(StrictBody):
 
 class IndexBuildRequest(StrictBody):
     force:bool=False
+
+
+class RecordReviewRequest(StrictBody):
+    text:str=''
+    images:list[str]=Field(default_factory=list)
+    @model_validator(mode='after')
+    def check_input(self):
+        cfg=get_settings().data['limits']
+        if len(self.text)>cfg['record_chars'] or len(self.images)>cfg['images']:raise ValueError('review_input_too_large')
+        if not self.text.strip() and not self.images:raise ValueError('empty_document')
+        return self

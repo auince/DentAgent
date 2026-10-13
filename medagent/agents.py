@@ -19,7 +19,7 @@ from .provider import LocalModelClient
 from .consult_contracts import FACT_PROMPT, validate_facts, REGISTRY
 from .routing import NEEDS_PROMPT, ROUTE_PROMPT, needs_view, validate_needs, selected_tasks, task_scopes
 from .retrieval import create_index
-from .skills import BOUNDARY,DocumentParseSkill,ReviewSkill,SymptomExtractSkill,KnowledgeSearchSkill
+from .skills import BOUNDARY,DocumentParseSkill,ReviewSkill,SymptomExtractSkill
 
 
 def merge_tasks(left,right):
@@ -75,10 +75,10 @@ class SpecialtyAgent:
     def __init__(self,task,skills):
         self.task,self.skills=task,skills
         graph=StateGraph(SpecialtyState)
-        for name,node in [('extract',self._extract),('retrieve',self._retrieve),('ground',self._ground),('explain',self._explain),('finish',self._finish)]:graph.add_node(name,node)
+        for name,node in [('extract',self._extract),('ground',self._ground),('rule_assess',self._rule_assess),('explain',self._explain),('finish',self._finish)]:graph.add_node(name,node)
         graph.add_edge(START,'extract')
-        graph.add_conditional_edges('extract',self._after_extract,{'retry':'extract','success':'retrieve','failed':'finish'})
-        graph.add_edge('retrieve','ground');graph.add_edge('ground','explain');graph.add_edge('explain','finish');graph.add_edge('finish',END)
+        graph.add_conditional_edges('extract',self._after_extract,{'retry':'extract','success':'ground','failed':'finish'})
+        graph.add_edge('ground','rule_assess');graph.add_edge('rule_assess','explain');graph.add_edge('explain','finish');graph.add_edge('finish',END)
         self.graph=graph.compile(checkpointer=False,name='specialty_'+task)
 
     def _extract(self,state):
@@ -96,14 +96,6 @@ class SpecialtyAgent:
         if not state.get('error'):return 'success'
         return 'retry' if not state.get('fatal') and state['attempt']<2 else 'failed'
 
-    def _retrieve(self,state):
-        result=copy.deepcopy(state['result'])
-        query='\n'.join(str(x) for x in result['assessments'])+'\n'+state['text'][:2000]
-        try:result['knowledge']=self.skills['knowledge_search'].run(self.task,query)
-        except Exception as exc:result['knowledge']=[];result['issues'].append({'code':'retrieval_failed','detail':str(exc)[:300]})
-        if not result['knowledge']:result['issues'].append({'code':'knowledge_not_found'})
-        return {'result':result,'trace':[event(self.task+'.retrieve','done',count=len(result['knowledge']))]}
-
     def _ground(self,state):
         result=copy.deepcopy(state['result'])
         try:
@@ -113,16 +105,29 @@ class SpecialtyAgent:
             result['evidence']=[];result['issues'].append({'code':'evidence_failed','detail':str(exc)[:300]})
         return {'result':result,'trace':[event(self.task+'.ground','done',evidence_count=len(result['evidence']))]}
 
-    def _explain(self,state):
+    def _rule_assess(self,state):
+        from .rules import assess
         result=copy.deepcopy(state['result'])
-        try:result['explanation']=self.skills['symptom_extract'].explain(self.task,state['text'],result,state['images'])
-        except Exception as exc:result['issues'].append({'code':'explanation_validation_failed','detail':str(exc)[:400]})
-        return {'result':result,'trace':[event(self.task+'.explain','done')]}
+        scored=assess(self.task,result['factors']);result['assessments']=scored['assessments']
+        result['issues']+=[i for i in scored['issues'] if i not in result['issues']]
+        result['rule_owner']='independent_rule_engine'
+        return {'result':result,'trace':[event(self.task+'.rule_assess','done',owner='independent_rule_engine')]}
+
+    def _explain(self,state):
+        from .specialty_explanation import SpecialtyExplanation
+        result=copy.deepcopy(state['result'])
+        try:
+            result['analysis_explanation']=SpecialtyExplanation(self.task,self.skills['symptom_extract'].client).run(result,state['text'])
+            result['risk_assessments']=result['analysis_explanation']['risk_assessments']
+        except Exception as exc:
+            result['risk_assessments']=[]
+            result['issues'].append({'code':'specialty_explanation_failed','detail':str(exc)[:240]})
+        return {'result':result,'trace':[event(self.task+'.explain','done' if result['risk_assessments'] else 'failed',risk_count=len(result['risk_assessments']))]}
 
     def _finish(self,state):
         if state.get('error'):
             return {'result':{'status':'failed','error':('schema_repair_exhausted:' if not state.get('fatal') else '')+self.task+':'+state['error']},'trace':[event(self.task,'failed')]}
-        result=copy.deepcopy(state['result']);result['status']='needs_review' if result['issues'] else 'assessed'
+        result=copy.deepcopy(state['result']);result['role']='structured_symptom_and_risk_analysis';result['task']=self.task;result['status']='needs_review' if result['issues'] else 'extracted'
         return {'result':result,'trace':[event(self.task,'done',issue_count=len(result['issues']))]}
 
     def invoke(self,text,images=(),scope=None):
@@ -149,6 +154,7 @@ class LeaderState(TypedDict,total=False):
     issues:Annotated[list,operator.add]
     trace:Annotated[list,operator.add]
     report:dict
+    leader_results:dict
 
 
 class LeaderAgent:
@@ -173,7 +179,9 @@ class LeaderAgent:
             extraction=TrainingAlignedExtractSkill(self.client)
         elif extraction_policy!='original':raise ValueError('invalid_extraction_policy')
         self.policies={'review':review_policy,'extraction':extraction_policy}
-        self.skills={s.name:s for s in [DocumentParseSkill(self.client),review,extraction,KnowledgeSearchSkill(create_index())]}
+        self.skills={s.name:s for s in [DocumentParseSkill(self.client),review,extraction]}
+        from .leader_analysis import LeaderAnalysis
+        self.analysis=LeaderAnalysis(self.client,create_index())
         from .disease_agents import DiseaseAgent
         self.specialists={t:SpecialtyAgent(t,self.skills) if t in {'root_canal','crack'} else DiseaseAgent(t,self.client) for t in REGISTRY}
         self._connection=None
@@ -194,15 +202,17 @@ class LeaderAgent:
             builder.add_node('reflow_'+task,self._specialty_node(task,True))
         builder.add_node('reconcile',self._reconcile)
         builder.add_node('reflow',lambda state:{'trace':[event('leader','reflow',reason='review_changed_source')]})
+        builder.add_node('leader_analysis',self._analyze)
         builder.add_node('aggregate',self._aggregate)
         builder.add_edge(START,'document_parse');builder.add_edge('document_parse','identify_symptoms')
         builder.add_edge('identify_symptoms','assess_needs');builder.add_edge('assess_needs','route')
         branches=['information_review']+['draft_'+t for t in self.specialists]
         for node in branches:builder.add_edge('route',node)
         builder.add_edge(branches,'reconcile')
-        builder.add_conditional_edges('reconcile',lambda state:'reflow' if state['changed'] else 'aggregate',{'reflow':'reflow','aggregate':'aggregate'})
+        builder.add_conditional_edges('reconcile',lambda state:'reflow' if state['changed'] else 'leader_analysis',{'reflow':'reflow','leader_analysis':'leader_analysis'})
         for task in self.specialists:builder.add_edge('reflow','reflow_'+task)
-        builder.add_edge(['reflow_'+t for t in self.specialists],'aggregate');builder.add_edge('aggregate',END)
+        builder.add_edge(['reflow_'+t for t in self.specialists],'leader_analysis')
+        builder.add_edge('leader_analysis','aggregate');builder.add_edge('aggregate',END)
         self.graph=builder.compile(checkpointer=checkpointer,name='dental_leader')
 
     def close(self):
@@ -322,9 +332,22 @@ class LeaderAgent:
                         'trace':ctx.events+[event('leader','reroute_failed')]}
         return {'changed':changed}
 
+    def _analyze(self,state):
+        text=state['review']['text'] if state['changed'] else state['document']['text']
+        extracted=state['finals'] if state['changed'] else state['drafts']
+        results={};trace=[]
+        for task in state['tasks']:
+            result=extracted.get(task,{'status':'failed','error':'specialty_result_missing','issues':[]})
+            if result.get('source_sha256')!=digest(text):
+                result={'status':'failed','error':'stale_specialty_result','issues':[],'source_sha256':digest(text)}
+            results[task]=self.analysis.organize(task,result,text)
+            trace.append(event('leader.analysis','done',task=task,rule_owner=results[task].get('rule_owner'),
+                document_count=len(results[task].get('closest_disease_documents',[])),status_result=results[task]['status']))
+        return {'leader_results':results,'trace':trace}
+
     def _aggregate(self,state):
         # An altered source invalidates every draft; no stale factors/evidence are reused.
-        results=copy.deepcopy(state['finals'] if state['changed'] else state['drafts'])
+        results=copy.deepcopy(state['leader_results'])
         for task,result in results.items():
             expected_sha=digest(state['review']['text'] if state['changed'] else state['document']['text'])
             if result.get('source_sha256')!=expected_sha:
@@ -336,8 +359,12 @@ class LeaderAgent:
         return {'report':{'run_id':state['run_id'],'status':status,'schema_version':2,'orchestrator':'langgraph','graph_version':self.graph_version,'policies':self.policies,
             'routing_facts':state.get('facts',[]),'assessment_needs':state.get('needs',{}),
             'document':state['document'],'tasks':state['tasks'],'review':state['review'],'reviewed_sha256':digest(state['review']['text']),
-            'results':results,'issues':state.get('issues',[]),
-            'summary':[{'task':task,'status':r['status'],'assessments':r.get('assessments',[]),
+            'specialty_extractions':{t:r for t,r in (state['finals'] if state['changed'] else state['drafts']).items() if t in state['tasks']},
+            'specialty_results':{t:r for t,r in (state['finals'] if state['changed'] else state['drafts']).items() if t in state['tasks']},
+            'results':results,'leader_analysis':results,
+            'closest_disease_documents':{t:r.get('closest_disease_documents',[]) for t,r in results.items()},
+            'issues':state.get('issues',[]),
+            'summary':[{'task':task,'status':r['status'],'assessments':r.get('assessments',[]),'risk_assessments':r.get('risk_assessments',[]),'analysis_explanation':r.get('analysis_explanation',{}),
                 **({'specialty_document':r['specialty_document']} if 'specialty_document' in r else {}),
                 **({'error':r['error']} if 'error' in r else {})} for task,r in results.items()]},
             'trace':[event('leader','aggregated',status_result=status)]}

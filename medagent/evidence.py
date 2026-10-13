@@ -29,7 +29,10 @@ def evidence_report(state):
             'source_id':f['source_id'],'source_kind':f.get('source_kind'),'status':f['status'],'tooth':f.get('tooth'),
             'conflicts_with':f.get('conflicts_with',[]),'source_span_verified':located,'supported':None})
     links=[]
-    for task,result in state.get('experts',{}).items():
-        for finding in result.get('findings',[]):links.append({'specialty':task,**finding,'support_type':'source_reference_only'})
-    return {'facts':facts,'expert_links':links,'knowledge':[{k:v for k,v in item.items() if k!='tf'} for item in state.get('knowledge',[])],
+    for task,result in state.get('leader_analysis',{}).items():
+        for finding in result.get('specialty_document',{}).get('findings',[]):links.append({'specialty':task,**finding,'support_type':'source_reference_only'})
+    risk_links=[{'specialty':task,'risk_level':risk['risk_level'],'basis':risk['basis'],
+        'evidence_ids':risk['evidence_ids'],'clinical_entailment_verified':False}
+        for task,result in state.get('experts',{}).items() for risk in result.get('risk_assessments',[])]
+    return {'facts':facts,'leader_links':links,'specialty_risk_links':risk_links,'expert_links':[],'knowledge':[{k:v for k,v in item.items() if k!='tf'} for item in state.get('knowledge',[])],
         'supported_semantics':'null means clinical entailment has not been independently verified'}

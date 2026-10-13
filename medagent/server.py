@@ -49,7 +49,7 @@ class BodyLimitMiddleware:
 def create_app(config_path=None):
     settings=configure(config_path);h=settings.data['http']
     # Import after configuration selection: the specialty registry uses this file.
-    from .api_models import AssessmentRequest,SessionRequest,MessageRequest,MemoryRequest,SearchRequest,IndexBuildRequest
+    from .api_models import AssessmentRequest,SessionRequest,MessageRequest,MemoryRequest,SearchRequest,IndexBuildRequest,RecordReviewRequest
     from .sessions import SessionStore,SessionBusy
     from .consultation import ConsultationService
     from .pipeline import Pipeline
@@ -116,6 +116,12 @@ def create_app(config_path=None):
     def assess(body:AssessmentRequest,request:Request,idempotency_key:str|None=Header(default=None)):
         payload=body.model_dump(exclude_none=True)
         return request.app.state.jobs.submit('assessment',payload,lambda rid,old:Pipeline().run(payload,rid),key=check_key(idempotency_key))
+    @router.post('/records/review',status_code=202,tags=['record review'])
+    def review_record(body:RecordReviewRequest,request:Request,idempotency_key:str|None=Header(default=None)):
+        from .record_review import RecordReviewService
+        payload=body.model_dump()
+        return request.app.state.jobs.submit('record_review',payload,
+            lambda rid,old:RecordReviewService().run(payload,rid),key=check_key(idempotency_key))
     @router.get('/runs/{run_id}',tags=['runs'])
     def run_status(run_id:str,request:Request):return request.app.state.jobs.get(check_id(run_id))
     @router.post('/sessions',status_code=201,tags=['consultation'])
