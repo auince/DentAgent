@@ -48,3 +48,16 @@ __pycache__/
 *.json
 !schemas/
 !schemas/*.json
+
+# Public usage documentation explicitly approved for publication.
+!/README.md
+
+# Local images used in record-review requests.
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.tif
+*.tiff
+*.bmp
