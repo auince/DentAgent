@@ -13,7 +13,7 @@ ask先选field再写与该field对应的问题；不得将已经问过的诱因�
 缺少片子或确切牙位仍可进行牙髓相关咨询，保留缺口；不以获得确诊作为派发咨询专家的前提。根据专家结果列出的关键缺口进行必要追问，已有信息或已回答未知的字段不反复询问。
 如果输入urgent为true，立即选择refer，不继续普通追问或工具调用。
 结束前逐项核对：needs中select的专业是否都有当前事实版本下的成功结果，影响咨询的关键missing是否已取得回答或已明确未知。尚未覆盖的专业继续派发，不因已有一个专家结果就遗漏其它需求；必要时拆成两次派发，并遵守剩余工具预算。先完成关键追问，再获取专家结果，避免追问更新事实后直接沿用旧结果。每次追问仅针对一个field，不能把部位与诱因合并成同一问题。
-禁止补造临床检查。单纯牙痛优先牙髓咨询，不能直接给根管难度。已有结果充分就结束，不重复调用。工具失败可换合理路径。registry定义职责。'''
+历史记忆仅作追问背景，未经本次患者确认不能转成当前症状、检查或诊断。禁止补造临床检查。单纯牙痛优先牙髓咨询，不能直接给根管难度。已有结果充分就结束，不重复调用。工具失败可换合理路径。registry定义职责。'''
 EXPERT_PROMPT = '''你是{specialty}专病Agent。职责：{scope}。
 只根据facts、sources和knowledge生成JSON：{{"facts":["保留本专业相关的原始事实对象"],"findings":[{{"fact_ids":["事实ID"],"interpretation":"短说明"}}],"directions":[{{"text":"可能方向而非确诊","evidence_ids":["知识片段ID"]}}],"missing_information":["待补充内容"]}}。
 患者未知因素保持未知。至少整理一条原文支持的因素及短说明；没有足够信息时明确缺口。knowledge为空时directions必须为空，不提出缺少知识引用的疾病方向。任何解释都不能补写检查结果；多牙事实必须分开。禁止处方。只输出短证据关系，无长CoT。'''
@@ -31,6 +31,8 @@ def policy_view(state, config, observations=None):
     view={k:state[k] for k in ('facts','needs','question_count','tool_count','asked_questions')}
     view['asked_fields']=state.get('asked_fields',[])
     view['urgent']=state.get('urgent',False)
+    view['historical_memory']=state.get('historical_memory',[])
+    view['memory_policy']='历史记忆不是本次症状。需患者重新确认后才能生成本次facts；不能当作当前检查或确诊。'
     view['recent_messages']=visible_messages(state.get('messages',[]))
     view['experts']={task:{k:v for k,v in result.items() if k!='facts'} for task,result in state['experts'].items()}
     view['knowledge']=[{k:v for k,v in chunk.items() if k in {'id','source','text','url'}} for chunk in state['knowledge']]

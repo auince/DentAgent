@@ -32,15 +32,29 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
-        if self.path != '/api/assess':
+        if self.path not in {'/api/assess','/api/sessions','/api/chat','/api/memory','/api/memory/forget'}:
             return self.send_json(404, {'error': 'not_found'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 32_000_000:
                 raise ValueError('请求大小不合法')
             request = json.loads(self.rfile.read(length))
-            result = Pipeline().run(request)
+            if not isinstance(request,dict):raise ValueError('request_must_be_object')
+            if self.path=='/api/assess':result=Pipeline().run(request)
+            else:
+                from .sessions import SessionStore
+                store=SessionStore()
+                if self.path=='/api/sessions':result=store.create(request.get('patient_id'))
+                elif self.path=='/api/chat':
+                    from .consultation import ConsultationService
+                    cid=request.get('conversation_id')
+                    if not isinstance(cid,str):raise ValueError('conversation_id_required')
+                    result=ConsultationService(store=store).run(cid,request)
+                elif self.path=='/api/memory':result=store.remember(request.get('conversation_id'),request.get('fact_ids'))
+                else:result=store.forget(request.get('conversation_id'))
             self.send_json(200, result)
+        except KeyError:
+            self.send_json(404, {'error':'conversation_or_memory_not_found'})
         except ValueError as exc:
             self.send_json(400, {'error': str(exc)[:240]})
         except Exception:

@@ -5,13 +5,21 @@ body{font:16px system-ui,sans-serif;background:#f3f6f8;color:#142c3a;margin:0}ma
 <div id="doctor"><h2>病历评估</h2><textarea id="record" placeholder="输入病历原文，保留牙位、阴阳性描述和检查结果"></textarea>
 <div id="tasks"></div><label id="routeLabel" hidden>路由方式 <select id="routing"><option value="manual">医生手动选择</option><option value="auto">Leader 自动选择</option></select></label>
 <div id="imagesBox" hidden><label>病历图片 <input id="images" type="file" accept="image/png,image/jpeg,image/webp" multiple></label></div>
-<button id="assess">开始评估</button></div><p id="status" role="status"></p><pre id="result">结果会显示在这里</pre></main>
+<button id="assess">开始评估</button></div><div id="patient"><h2>口语辅助预诊</h2>
+<button id="newSession">开始新对话</button><label>患者记忆标识 <input id="patientId" placeholder="新患者可留空"></label>
+<textarea id="message" placeholder="用自己的话说说哪里不舒服、多久了"></textarea><button id="chat">发送</button>
+<p>短期对话自动保留；长期记忆只保存你主动确认的既往情况。</p><div id="memories"></div><button id="remember">记住所选信息</button><button id="forget">清除长期记忆</button></div>
+<p id="status" role="status"></p><pre id="result">结果会显示在这里</pre></main>
 <script>
 const $=id=>document.getElementById(id);let config,conversationId,lastFacts=[];
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.error||'请求失败');return data}
 function show(data){$('result').textContent=JSON.stringify(data,null,2)}
 async function action(button,fn){button.disabled=true;$('status').textContent='正在处理…';try{show(await fn());$('status').textContent='已完成，请检查结果与依据'}catch(e){$('status').textContent=e.message}finally{button.disabled=false}}
 function names(){return {root_canal:'根管治疗难度',crack:'牙隐裂风险',pulp_periapical:'牙髓与根尖周',periodontal:'牙周'}}
-fetch('/api/config').then(r=>r.json()).then(c=>{config=c;$('version').textContent='原型 V'+c.version;$('tasks').replaceChildren();for(const id of c.specialties){const l=document.createElement('label'),i=document.createElement('input');i.type='checkbox';i.value=id;i.name='task';i.checked=c.specialties.length===1;l.append(i,document.createTextNode(names()[id]));$('tasks').append(l)}$('routeLabel').hidden=c.version<3;$('imagesBox').hidden=c.version<5;});
+fetch('/api/config').then(r=>r.json()).then(c=>{config=c;$('version').textContent='原型 V'+c.version;$('tasks').replaceChildren();for(const id of c.specialties){const l=document.createElement('label'),i=document.createElement('input');i.type='checkbox';i.value=id;i.name='task';i.checked=c.specialties.length===1;l.append(i,document.createTextNode(names()[id]));$('tasks').append(l)}$('routeLabel').hidden=c.version<3;$('imagesBox').hidden=c.version<5;$('patient').style.display=c.version>=7?'block':'none'});
 $('assess').onclick=()=>action($('assess'),async()=>{const images=[];for(const f of $('images').files){if(f.size>10_000_000)throw Error('单张图片请小于10MB');images.push(await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(f)}))}const request={text:$('record').value,routing_mode:$('routing').value,images};if(request.routing_mode==='manual')request.tasks=[...document.querySelectorAll('[name=task]:checked')].map(x=>x.value);return post('/api/assess',request)});
+$('newSession').onclick=()=>action($('newSession'),async()=>{const data=await post('/api/sessions',{patient_id:$('patientId').value||null});conversationId=data.conversation_id;$('patientId').value=data.patient_id;lastFacts=[];$('memories').replaceChildren();return data});
+$('chat').onclick=()=>action($('chat'),async()=>{if(!conversationId)throw Error('请先开始对话');const data=await post('/api/chat',{conversation_id:conversationId,text:$('message').value});lastFacts=data.facts||[];$('memories').replaceChildren();for(const f of lastFacts){const l=document.createElement('label'),i=document.createElement('input');i.type='checkbox';i.name='memory';i.value=f.id;l.append(i,document.createTextNode(f.quote));$('memories').append(l,document.createElement('br'))}return data});
+$('remember').onclick=()=>action($('remember'),()=>post('/api/memory',{conversation_id:conversationId,fact_ids:[...document.querySelectorAll('[name=memory]:checked')].map(x=>x.value)}));
+$('forget').onclick=()=>action($('forget'),()=>post('/api/memory/forget',{conversation_id:conversationId}));
 </script></html>
