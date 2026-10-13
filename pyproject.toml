@@ -1,17 +1,10 @@
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
-
 [project]
-name = "medagent-dental"
-version = "0.2.0"
-description = "Auditable dental clinical assessment orchestration"
+name = "medagent-dental-prototype"
+version = "1.0.0"
 requires-python = ">=3.10"
-dependencies = ["langgraph==1.2.12", "langgraph-checkpoint-sqlite==3.1.1"]
-
-[project.optional-dependencies]
-train = ["torch", "transformers>=4.57", "datasets", "peft", "trl", "accelerate"]
-ocr = ["paddleocr"]
-
+dependencies = []
 [tool.setuptools]
 packages = ["medagent"]
