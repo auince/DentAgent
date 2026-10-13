@@ -1,6 +1,6 @@
-# MedAgent
+# DentAgent
 
-MedAgent 是一个口腔多 Agent 后端，支持病历分析、图片审校和患者症状对话。当前包含根管治疗、牙隐裂、牙髓与根尖周、牙周四个专病 Agent。
+DentAgent 是一个口腔多 Agent 后端，支持病历分析、图片审校和患者症状对话。当前包含根管治疗、牙隐裂、牙髓与根尖周、牙周四个专病 Agent。
 
 ## 功能
 
@@ -25,15 +25,15 @@ MedAgent 是一个口腔多 Agent 后端，支持病历分析、图片审校和�
 | V8 | 新增牙髓与根尖周、牙周 Agent；后续加入后端 API 与统一配置 |
 | V9 | 混合检索与重排序；后续完善 Agent 职责、风险说明和参考规则 |
 
-各版代码可在 [Tags](https://github.com/auince/MedAgent/tags) 中查看，例如 `git checkout v8.0.0`。以下使用方式对应当前 `main`。
+各版代码可在 [Tags](https://github.com/auince/DentAgent/tags) 中查看，例如 `git checkout v8.0.0`。以下使用方式对应当前 `main`。
 
 ## 启动
 
 需要 Python 3.10+，运行环境为 Linux 或 macOS。
 
 ```bash
-git clone https://github.com/auince/MedAgent.git
-cd MedAgent
+git clone https://github.com/auince/DentAgent.git
+cd DentAgent
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
