@@ -50,13 +50,9 @@ class ConsultationAgent:
         self.config=config or read_json(ROOT/'configs/consultation.json')
         self.client=client or LocalModelClient(self.config['models'])
         self.index=index or KnowledgeIndex(ROOT/'knowledge')
-        if index is None and self.config.get('retrieval',{}).get('type')=='hybrid':
-            from .dense_retrieval import DenseKnowledgeIndex
-            r=self.config['retrieval']
-            self.index=DenseKnowledgeIndex(ROOT/'knowledge',ROOT/r['index_path'],r['encoder_path'],r.get('device','cpu'))
-        if self.config.get('retrieval',{}).get('reranker_path'):
-            from .dense_retrieval import RerankedIndex
-            r=self.config['retrieval'];self.index=RerankedIndex(self.index,r['reranker_path'],r.get('device','cpu'))
+        retrieval=self.config.get('retrieval',{})
+        if retrieval.get('type','bm25')!='bm25' or retrieval.get('reranker_path'):
+            raise ValueError('prototype_supports_bm25_retrieval_only')
         g=StateGraph(ConsultationState)
         for name,fn in [('parse',self.parse),('triage',self.triage),('assess_needs',self.assess_needs),('policy',self.policy),('tools',self.tools),('answer',self.answer)]:g.add_node(name,fn)
         g.add_edge(START,'parse');g.add_edge('parse','triage')

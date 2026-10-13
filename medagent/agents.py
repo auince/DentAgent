@@ -1,4 +1,4 @@
-"""LangGraph orchestration: a leader graph and two bounded specialty subgraphs."""
+"""LangGraph orchestration: a leader graph and registry-driven bounded specialty subgraphs."""
 import copy
 import json
 import operator
@@ -34,7 +34,7 @@ def route_tasks(plan):
     """Accept exact task names and explicit boolean task objects, never infer from prose."""
     if not isinstance(plan,dict) or not isinstance(plan.get('tasks'),list):
         raise ValueError('invalid_route_schema')
-    allowed={'root_canal','crack'};tasks=[];adapted=False
+    allowed=set(REGISTRY);tasks=[];adapted=False
     for item in plan['tasks']:
         if isinstance(item,str) and item in allowed:tasks.append(item)
         elif isinstance(item,dict) and (set(item)&allowed):
@@ -172,7 +172,8 @@ class LeaderAgent:
         elif extraction_policy!='original':raise ValueError('invalid_extraction_policy')
         self.policies={'review':review_policy,'extraction':extraction_policy}
         self.skills={s.name:s for s in [DocumentParseSkill(self.client),review,extraction,KnowledgeSearchSkill(KnowledgeIndex(ROOT/'knowledge'))]}
-        self.specialists={t:SpecialtyAgent(t,self.skills) for t in ('root_canal','crack')}
+        from .disease_agents import DiseaseAgent
+        self.specialists={t:SpecialtyAgent(t,self.skills) if t in {'root_canal','crack'} else DiseaseAgent(t,self.client) for t in REGISTRY}
         self._connection=None
         if checkpointer is None:
             self.runtime.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -186,7 +187,7 @@ class LeaderAgent:
         builder.add_node('assess_needs',self._assess_needs)
         builder.add_node('route',self._route)
         builder.add_node('information_review',self._review)
-        for task in ('root_canal','crack'):
+        for task in self.specialists:
             builder.add_node('draft_'+task,self._specialty_node(task,False))
             builder.add_node('reflow_'+task,self._specialty_node(task,True))
         builder.add_node('reconcile',self._reconcile)
@@ -194,12 +195,12 @@ class LeaderAgent:
         builder.add_node('aggregate',self._aggregate)
         builder.add_edge(START,'document_parse');builder.add_edge('document_parse','identify_symptoms')
         builder.add_edge('identify_symptoms','assess_needs');builder.add_edge('assess_needs','route')
-        branches=['information_review','draft_root_canal','draft_crack']
+        branches=['information_review']+['draft_'+t for t in self.specialists]
         for node in branches:builder.add_edge('route',node)
         builder.add_edge(branches,'reconcile')
         builder.add_conditional_edges('reconcile',lambda state:'reflow' if state['changed'] else 'aggregate',{'reflow':'reflow','aggregate':'aggregate'})
-        for task in ('root_canal','crack'):builder.add_edge('reflow','reflow_'+task)
-        builder.add_edge(['reflow_root_canal','reflow_crack'],'aggregate');builder.add_edge('aggregate',END)
+        for task in self.specialists:builder.add_edge('reflow','reflow_'+task)
+        builder.add_edge(['reflow_'+t for t in self.specialists],'aggregate');builder.add_edge('aggregate',END)
         self.graph=builder.compile(checkpointer=checkpointer,name='dental_leader')
 
     def close(self):
@@ -297,7 +298,7 @@ class LeaderAgent:
             text=state['review']['text'] if reflow else state['document']['text']
             try:
                 output=self.specialists[task].invoke(text,state['request'].get('images',[]),state.get('scopes',{}).get(task));result=output['result'];result['source_sha256']=digest(text);trace=output['trace']
-            except Exception as exc:result={'status':'failed','error':str(exc)[:400]};trace=[event(task,'failed',error=str(exc)[:400])]
+            except Exception as exc:result={'status':'failed','error':str(exc)[:400],'source_sha256':digest(text),'issues':[]};trace=[event(task,'failed',error=str(exc)[:400])]
             return {'finals' if reflow else 'drafts':{task:result},'trace':trace}
         return run
 
@@ -332,7 +333,9 @@ class LeaderAgent:
             'routing_facts':state.get('facts',[]),'assessment_needs':state.get('needs',{}),
             'document':state['document'],'tasks':state['tasks'],'review':state['review'],'reviewed_sha256':digest(state['review']['text']),
             'results':results,'issues':state.get('issues',[]),
-            'summary':[{'task':task,'status':r['status'],'assessments':r.get('assessments',[])} for task,r in results.items()]},
+            'summary':[{'task':task,'status':r['status'],'assessments':r.get('assessments',[]),
+                **({'specialty_document':r['specialty_document']} if 'specialty_document' in r else {}),
+                **({'error':r['error']} if 'error' in r else {})} for task,r in results.items()]},
             'trace':[event('leader','aggregated',status_result=status)]}
 
     def run(self,request,run_id=None):
