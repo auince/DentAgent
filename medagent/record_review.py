@@ -4,14 +4,15 @@ from .common import digest,write_json
 from .domain import validate_request
 from .provider import LocalModelClient
 from .settings import configured_path,get_settings
-from .skills import DocumentParseSkill,ReviewSkill
+from .skills import build_skill_registry
 
 class RecordReviewService:
-    def __init__(self,client=None):self.client=client or LocalModelClient()
+    def __init__(self,client=None):
+        self.registry=build_skill_registry(client or LocalModelClient())
     def run(self,request,run_id):
         started=time.monotonic();text,images=validate_request(request,allow_images=True)
-        document=DocumentParseSkill(self.client).run(text,images)
-        review=ReviewSkill(self.client).run(document['text'],images)
+        document=self.registry.run('document_parse',text=text,images=images)
+        review=self.registry.run('information_review',text=document['text'],images=images)
         issues=document['issues']+review['issues']
         report={'run_id':run_id,'status':'completed' if review['approved'] and not issues else 'needs_review',
             'owner':'leader','kind':'record_review','version':get_settings().data['version'],

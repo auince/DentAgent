@@ -9,7 +9,10 @@ from .skills import BOUNDARY
 
 
 class LeaderAnalysis:
-    def __init__(self,client,index):self.client,self.index=client,index
+    def __init__(self,client,index,registry=None):
+        from .skills import build_skill_registry
+        self.client,self.index=client,index
+        self.registry=registry or build_skill_registry(client,index)
 
     def query(self,task,extraction):
         # Retain negation, uncertainty and provenance; do not insert model diagnoses.
@@ -21,7 +24,7 @@ class LeaderAnalysis:
 
     def retrieve(self,task,extraction):
         query,truncated=self.query(task,extraction)
-        envelope=self.index.search_with_trace(query,task=task)
+        envelope=self.registry.run('knowledge_search',task=task,payload={'query':query})
         hits=envelope['results']
         documents=[];by_source={}
         for rank,hit in enumerate(hits,1):

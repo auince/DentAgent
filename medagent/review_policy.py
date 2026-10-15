@@ -12,7 +12,7 @@ def clinical_text(text):
     return re.sub(r'^分析此病例的牙隐裂分级\s*[:：]\s*','',value)
 
 
-class ConservativeReviewSkill:
+class ConservativeReviewSkill(ReviewSkill):
     name='information_review'
     def __init__(self,client):self.client=client
     def run(self,text,images=()):

@@ -15,6 +15,8 @@ from .provider import LocalModelClient,CALL_METADATA
 from .retrieval import create_index
 from .settings import get_settings
 from .sessions import SessionStore
+from .context import source_version, filter_facts
+from .skills import build_skill_registry
 from .routing import NEEDS_PROMPT, needs_view, validate_needs
 from .evidence import evidence_report
 from .triage import urgent_fact_ids
@@ -47,6 +49,11 @@ class ConsultationState(TypedDict, total=False):
     leader_analysis: dict
     record_review: dict
     source_changed: bool
+    history_summary: dict
+    context_version: str
+    context_revision: int
+    conversation_id: str
+    context_audit: dict
 
 def _json(x): return json.dumps(x,ensure_ascii=False)
 MODEL_TRACE=contextvars.ContextVar('oral_model_trace',default=None)
@@ -59,13 +66,18 @@ class TracedClient:
 
 
 class ConsultationAgent:
-    def __init__(self, client=None, config=None, index=None):
+    def __init__(self, client=None, config=None, index=None, store=None, registry=None):
         self.config=config or get_settings().consultation()
         self.client=client or LocalModelClient(self.config['models'])
         self.index=index or create_index()
+        self.store=store
         from .leader_analysis import LeaderAnalysis
         self.traced_client=TracedClient(self)
-        self.analysis=LeaderAnalysis(self.traced_client,self.index)
+        self.registry=registry or build_skill_registry(self.traced_client,self.index,store=self.store)
+        self.registry.require('information_review','evidence_select','symptom_extract',
+            'evidence_ground','rule_assess','analysis_explain','knowledge_search')
+        if self.store:self.registry.require('evidence_lookup')
+        self.analysis=LeaderAnalysis(self.traced_client,self.index,registry=self.registry)
         g=StateGraph(ConsultationState)
         for name,fn in [('parse',self.parse),('triage',self.triage),('assess_needs',self.assess_needs),('policy',self.policy),('tools',self.tools),('answer',self.answer)]:g.add_node(name,fn)
         g.add_edge(START,'parse');g.add_edge('parse','triage')
@@ -104,12 +116,14 @@ class ConsultationAgent:
         # Only this turn is extracted; older facts retain their original provenance.
         current={k:v for k,v in sources.items() if k.startswith(s['message_id'])}
         aliases={('patient' if key==s['message_id'] else 'image_record' if key.endswith('-image') else 'record'):key for key in current}
-        payload=self.call('frontend',FACT_PROMPT,{'sources':{alias:current[key] for alias,key in aliases.items()},'prior_facts':s['facts'][-32:]})
+        payload=self.call('frontend',FACT_PROMPT,{'sources':{alias:current[key] for alias,key in aliases.items()},'prior_facts':filter_facts(s['facts'],limit=2000)[0],
+            'historical_summary':s.get('history_summary',{})})
         if isinstance(payload,dict) and isinstance(payload.get('facts'),list):
             for fact in payload['facts']:
                 if isinstance(fact,dict):fact['source_id']=aliases.get(fact.get('source_id'),fact.get('source_id'))
         facts,rejected=validate_facts(payload,current)
         return {'sources':sources,'facts':merge_facts(s['facts'],facts),'issues':issues+rejected,
+            'context_version':digest(source_version(s)+json.dumps(current,sort_keys=True,ensure_ascii=False)),
             'trace':s['trace']+[{'step':'facts','count':len(facts),'rejected':rejected}]}
 
     def triage(self,s):
@@ -119,13 +133,18 @@ class ConsultationAgent:
 
     def assess_needs(self,s):
         try:
-            raw=self.call('needs',NEEDS_PROMPT,needs_view(s['facts'],observations=s['observations'],recent_messages=visible_messages(s['messages'])))
-            needs=validate_needs(raw,s['facts'])
+            from .context import policy_context
+            projection=policy_context(s,self.config)
+            visible=projection['facts'];audit=projection['context_audit']
+            raw=self.call('needs',NEEDS_PROMPT,needs_view(visible,
+                recent_messages=projection['recent_messages'],historical_summary=projection['history_summary']))
+            needs=validate_needs(raw,visible)
         except Exception as exc:
             return {'needs':{'status':'failed','candidates':[],'error':str(exc)[:160]},
                 'issues':s['issues']+['needs_analysis_failed'],
                 'trace':s['trace']+[{'step':'assess_needs','status':'failed','error':str(exc)[:160]}]}
-        return {'needs':needs,'trace':s['trace']+[{'step':'assess_needs','status':'ok','needs':needs}]}
+        return {'needs':needs,'context_audit':audit,'issues':s['issues']+(['routing_context_incomplete'] if audit['incomplete'] else []),
+            'trace':s['trace']+[{'step':'assess_needs','status':'ok','needs':needs,'context_audit':audit}]}
 
     def policy(self,s):
         if s['action_count']>=self.config['max_actions']:
@@ -147,14 +166,17 @@ class ConsultationAgent:
         from .disease_agents import DiseaseAgent
         from .routing import task_scopes
         scopes=task_scopes(s['needs'],s['facts'],[task])
-        output=DiseaseAgent(task,self.traced_client).invoke_sources(s['sources'],scopes.get(task))
+        archived=self.registry.run('evidence_lookup',task=task,scope=scopes.get(task,[]),
+            payload={'conversation_id':s['conversation_id']}) if self.store else {'sources':{},'facts':[]}
+        sources={**archived['sources'],**s['sources']}
+        facts=list({f['id']:f for f in archived['facts']+s['facts']}.values())
+        output=DiseaseAgent(task,registry=self.registry).invoke_sources(sources,scopes.get(task),facts,source_version(s),archived.get('archive_audit'))
         return output['result']
 
     def review_record(self,s):
-        from .review_skill import ImageReviewSkill
         current={k:v for k,v in s['sources'].items() if k.startswith(s['message_id']) and v['kind']=='clinical_record'}
         text='\n'.join(v['text'] for v in current.values())
-        review=ImageReviewSkill(self.traced_client).run(text,s['images'])
+        review=self.registry.run('information_review',text=text,images=s['images'])
         return current,review
 
     def apply_review(self,s,current,review):
@@ -172,7 +194,8 @@ class ConsultationAgent:
             remaining_ids={f['id'] for f in remaining}
             remaining=[{**fact,'conflicts_with':[i for i in fact.get('conflicts_with',[]) if i in remaining_ids]} for fact in remaining]
             updates.update(sources={k:v for k,v in s['sources'].items() if k not in current}|source,
-                           facts=merge_facts(remaining,facts))
+                           facts=merge_facts(remaining,facts),
+                           context_version=digest(source_version(s)+digest(review['text'])))
         return updates
 
     def tools(self,s):
@@ -258,7 +281,7 @@ class ConsultationAgent:
                 from .routing import selected_tasks
                 for task,extraction in s['experts'].items():
                     if task not in selected_tasks(s.get('needs',{'candidates':[]})):continue
-                    if extraction.get('input_version')!=digest(json.dumps(s['sources'],sort_keys=True,ensure_ascii=False)):
+                    if extraction.get('input_version')!=source_version(s):
                         issues.append('stale_specialty_result:'+task);continue
                     cached=s.get('retrievals',{}).get(task)
                     if cached and cached['input_version']!=extraction.get('input_version'):cached=None
@@ -269,8 +292,10 @@ class ConsultationAgent:
                     knowledge.extend(analyses[task].get('knowledge',[]))
                 knowledge=list({hit['id']:hit for hit in knowledge}.values())
                 observations.append({'tool':'leader_analysis','tasks':list(analyses),'query_basis':'structured_symptoms'})
-                response=self.call('answer',ANSWER_PROMPT,{'facts':s['facts'],'experts':s['experts'],
-                    'leader_analysis':analyses,'knowledge':knowledge,'observations':observations,'decision':a})
+                from .context import answer_context
+                packet=answer_context(s,analyses,knowledge,a)
+                if packet['context_audit']['incomplete']:issues.append('answer_context_incomplete')
+                response=self.call('answer',ANSWER_PROMPT+'\n若context_audit.incomplete为true，明确说明摘要未覆盖全部证据，不能据此排除疾病或确认低风险。',packet)
                 if not isinstance(response,dict) or not isinstance(response.get('answer'),str) or not isinstance(response.get('citations'),list):raise ValueError('invalid_answer')
                 valid={k['id'] for k in knowledge}
                 if any(c not in valid for c in response['citations']):raise ValueError('invalid_citation')
@@ -286,7 +311,7 @@ class ConsultationAgent:
 
 class ConsultationService:
     def __init__(self,agent=None,store=None,runtime=None):
-        self.agent=agent or ConsultationAgent();self.store=store or SessionStore()
+        self.store=store or SessionStore();self.agent=agent or ConsultationAgent(store=self.store)
         self.runtime=runtime or configured_path('conversation_runs_dir')
 
     def run(self,cid,request,rid=None,reserved=None):
@@ -302,15 +327,27 @@ class ConsultationService:
             mid=uuid.uuid4().hex
             sources=old['sources']|{mid:{'text':text,'kind':'patient_report','time':time.time()}}
             if record:sources[mid+'-record']={'text':record,'kind':'clinical_record','time':time.time()}
-            initial={**old,'historical_memory':self.store.profile(old['patient_id']),'sources':sources,'text':text,'images':images,'message_id':mid,
+            initial={**old,'context_version':digest(source_version(old)+json.dumps({k:v for k,v in sources.items() if k.startswith(mid)},sort_keys=True,ensure_ascii=False)),
+                'historical_memory':self.store.profile(old['patient_id']),'sources':sources,'text':text,'images':images,'message_id':mid,
                 'asked_fields':old.get('asked_fields',[]),
                 'messages':old['messages']+[{'role':'user','content':text,'id':mid}],
                 'experts':{},'knowledge':[],'observations':[],'trace':[],'issues':[],
                 'tool_count':0,'action_count':0,'image_reviewed':False,'urgent':False,
                 'retrievals':{},'leader_analysis':{},'record_review':{},'source_changed':False}
+            # Explicit FDI mentions can recall old evidence before routing, without treating a summary as a source.
+            mentioned=sorted({tooth for pair in re.findall(r'(?<!\d)([1-4][1-8])\s*牙|牙位\s*([1-4][1-8])(?!\d)',text+'\n'+record) for tooth in pair if tooth})
+            if mentioned and getattr(self.agent,'registry',None) and getattr(self.agent,'store',None):
+                recalled=self.agent.registry.run('evidence_lookup',scope=mentioned,payload={'conversation_id':cid})
+                initial['sources']={**recalled['sources'],**initial['sources']}
+                initial['facts']=list({f['id']:f for f in recalled['facts']+old['facts']}.values())
+                audit=recalled.get('archive_audit',{})
+                if audit.get('facts_truncated') or audit.get('sources_truncated'):
+                    initial['issues'].append('history_recall_incomplete')
             write_json(self.runtime/(rid+'.json'),{'run_id':rid,'conversation_id':cid,'status':'running'})
             result=self.agent.graph.invoke(initial,{'recursion_limit':30})
             saved={k:result[k] for k in ('sources','facts','messages','question_count','asked_questions','asked_fields')}
+            for key in ('history_summary','context_version','context_revision'):
+                if key in result:saved[key]=result[key]
             saved['conversation_id']=cid
             saved['patient_id']=old['patient_id']
             saved['historical_memory']=self.store.profile(old['patient_id'])

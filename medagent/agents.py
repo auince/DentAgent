@@ -19,7 +19,8 @@ from .provider import LocalModelClient
 from .consult_contracts import FACT_PROMPT, validate_facts, REGISTRY
 from .routing import NEEDS_PROMPT, ROUTE_PROMPT, needs_view, validate_needs, selected_tasks, task_scopes
 from .retrieval import create_index
-from .skills import BOUNDARY,DocumentParseSkill,ReviewSkill,SymptomExtractSkill
+from .skills import BOUNDARY,build_skill_registry
+from .skill_registry import SkillExecutionError
 
 
 def merge_tasks(left,right):
@@ -68,12 +69,15 @@ class SpecialtyState(TypedDict,total=False):
     error:str
     fatal:bool
     result:dict
+    sources:dict
+    context_audit:dict
     trace:Annotated[list,operator.add]
 
 
 class SpecialtyAgent:
-    def __init__(self,task,skills):
-        self.task,self.skills=task,skills
+    def __init__(self,task,registry):
+        self.task,self.registry=task,registry
+        self.registry.require('evidence_select','symptom_extract','evidence_ground','rule_assess','analysis_explain')
         graph=StateGraph(SpecialtyState)
         for name,node in [('extract',self._extract),('ground',self._ground),('rule_assess',self._rule_assess),('explain',self._explain),('finish',self._finish)]:graph.add_node(name,node)
         graph.add_edge(START,'extract')
@@ -84,10 +88,14 @@ class SpecialtyAgent:
     def _extract(self,state):
         attempt=state.get('attempt',0)+1
         try:
-            kwargs={'scope':state['scope']} if state.get('scope') else {}
-            result=self.skills['symptom_extract'].run(self.task,state['text'],state.get('error') or None,**kwargs)
+            result=self.registry.run('symptom_extract',task=self.task,text=state['text'],sources=state['sources'],
+                feedback=state.get('error') or None,scope=state.get('scope',[]))
+            if not state['context_audit']['complete']:
+                result['issues'].append({'code':'context_evidence_omitted','context_audit':state['context_audit']})
             return {'attempt':attempt,'error':'','fatal':False,'result':result,'trace':[event(self.task,'extracted',attempt=attempt)]}
-        except ValueError as exc:
+        except (ValueError,SkillExecutionError) as exc:
+            if isinstance(exc,SkillExecutionError) and not exc.retryable:
+                return {'attempt':attempt,'error':str(exc),'fatal':True,'trace':[event(self.task,'failed')]}
             return {'attempt':attempt,'error':str(exc),'fatal':False,'trace':[event(self.task,'schema_retry',attempt=attempt,error=str(exc))]}
         except Exception as exc:
             return {'attempt':attempt,'error':str(exc)[:400],'fatal':True,'trace':[event(self.task,'failed',error=str(exc)[:400])]}
@@ -99,26 +107,24 @@ class SpecialtyAgent:
     def _ground(self,state):
         result=copy.deepcopy(state['result'])
         try:
-            result['evidence'],issues=self.skills['symptom_extract'].ground(self.task,state['text'],result['factors'],state['images'])
-            result['issues']+=issues
+            grounded=self.registry.run('evidence_ground',task=self.task,text=state['text'],factors=result['factors'],
+                images=state['images'],sources=state['sources'])
+            result['evidence']=grounded['evidence'];result['sources']=state['sources'];result['issues']+=grounded['issues']
         except Exception as exc:
             result['evidence']=[];result['issues'].append({'code':'evidence_failed','detail':str(exc)[:300]})
         return {'result':result,'trace':[event(self.task+'.ground','done',evidence_count=len(result['evidence']))]}
 
     def _rule_assess(self,state):
-        from .rules import assess
         result=copy.deepcopy(state['result'])
-        scored=assess(self.task,result['factors']);result['assessments']=scored['assessments']
+        scored=self.registry.run('rule_assess',task=self.task,factors=result['factors']);result['assessments']=scored['assessments']
         result['issues']+=[i for i in scored['issues'] if i not in result['issues']]
         result['rule_owner']='independent_rule_engine'
         return {'result':result,'trace':[event(self.task+'.rule_assess','done',owner='independent_rule_engine')]}
 
     def _explain(self,state):
-        from .specialty_explanation import SpecialtyExplanation
         result=copy.deepcopy(state['result'])
         try:
-            result['analysis_explanation']=SpecialtyExplanation(self.task,self.skills['symptom_extract'].client).run(result,state['text'])
-            result['risk_assessments']=result['analysis_explanation']['risk_assessments']
+            result.update(self.registry.run('analysis_explain',task=self.task,text=state['text'],payload={'result':result}))
         except Exception as exc:
             result['risk_assessments']=[]
             result['issues'].append({'code':'specialty_explanation_failed','detail':str(exc)[:240]})
@@ -127,11 +133,14 @@ class SpecialtyAgent:
     def _finish(self,state):
         if state.get('error'):
             return {'result':{'status':'failed','error':('schema_repair_exhausted:' if not state.get('fatal') else '')+self.task+':'+state['error']},'trace':[event(self.task,'failed')]}
-        result=copy.deepcopy(state['result']);result['role']='structured_symptom_and_risk_analysis';result['task']=self.task;result['status']='needs_review' if result['issues'] else 'extracted'
+        result=copy.deepcopy(state['result']);result['context_audit']=state['context_audit'];result['role']='structured_symptom_and_risk_analysis';result['task']=self.task;result['status']='needs_review' if result['issues'] else 'extracted'
         return {'result':result,'trace':[event(self.task,'done',issue_count=len(result['issues']))]}
 
     def invoke(self,text,images=(),scope=None):
-        return self.graph.invoke({'task':self.task,'text':text,'images':list(images),'scope':scope or [],'attempt':0,'error':'','trace':[event(self.task,'running',input_sha256=digest(text),scope=scope or [])]},config={'recursion_limit':16})
+        selected=self.registry.run('evidence_select',task=self.task,text=text,scope=scope or [])
+        return self.graph.invoke({'task':self.task,'text':selected['text'],'sources':selected['sources'],
+            'context_audit':selected['audit'],'images':list(images),'scope':scope or [],'attempt':0,'error':'',
+            'trace':[event(self.task,'running',input_sha256=digest(text),scope=scope or [],context_audit=selected['audit'])]},config={'recursion_limit':16})
 
     def run(self,text,ctx,images=()):
         state=self.invoke(text,images)
@@ -158,32 +167,23 @@ class LeaderState(TypedDict,total=False):
 
 
 class LeaderAgent:
-    def __init__(self,client=None,runtime=None,checkpointer=None,review_policy=None,extraction_policy=None):
+    def __init__(self,client=None,runtime=None,checkpointer=None,review_policy=None,extraction_policy=None,registry=None):
         self.client=client or LocalModelClient();self.runtime=runtime or configured_path('graph_dir')
         from .settings import get_settings
         policy=get_settings().data['agent']
         review_policy=review_policy or policy['review_policy']
         extraction_policy=extraction_policy or policy['extraction_policy']
         self.graph_version=policy['graph_version']
-        review=ReviewSkill(self.client)
-        if review_policy=='conservative':
-            from .review_policy import ConservativeReviewSkill
-            review=ConservativeReviewSkill(self.client)
-        elif review_policy!='original':raise ValueError('invalid_review_policy')
-        extraction=SymptomExtractSkill(self.client)
-        if extraction_policy=='explicit_fields':
-            from .extraction_policy import ExplicitFieldExtractSkill
-            extraction=ExplicitFieldExtractSkill(self.client)
-        elif extraction_policy=='training_aligned':
-            from .extraction_policy import TrainingAlignedExtractSkill
-            extraction=TrainingAlignedExtractSkill(self.client)
-        elif extraction_policy!='original':raise ValueError('invalid_extraction_policy')
         self.policies={'review':review_policy,'extraction':extraction_policy}
-        self.skills={s.name:s for s in [DocumentParseSkill(self.client),review,extraction]}
+        index=create_index()
+        self.registry=registry or build_skill_registry(self.client,index,review_policy,extraction_policy)
+        self.registry.require('document_parse','information_review','evidence_select','symptom_extract',
+            'evidence_ground','rule_assess','analysis_explain','knowledge_search')
         from .leader_analysis import LeaderAnalysis
-        self.analysis=LeaderAnalysis(self.client,create_index())
+        self.analysis=LeaderAnalysis(self.client,index,registry=self.registry)
         from .disease_agents import DiseaseAgent
-        self.specialists={t:SpecialtyAgent(t,self.skills) if t in {'root_canal','crack'} else DiseaseAgent(t,self.client) for t in REGISTRY}
+        self.specialists={t:SpecialtyAgent(t,self.registry) if t in {'root_canal','crack'}
+            else DiseaseAgent(t,registry=self.registry) for t in REGISTRY}
         self._connection=None
         if checkpointer is None:
             self.runtime.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -273,7 +273,7 @@ class LeaderAgent:
         from .settings import get_settings
         limits=get_settings().data['limits']
         if not isinstance(text,str) or len(text)>limits['record_chars'] or not isinstance(images,list) or len(images)>limits['images']:raise ValueError('invalid_document_size_or_type')
-        doc=self.skills['document_parse'].run(text,images)
+        doc=self.registry.run('document_parse',text=text,images=list(images))
         return {'document':{'text':doc['text'],'method':doc['method'],'sha256':digest(doc['text'])},'issues':doc['issues'],
             'trace':[event('document_parse','done',sha256=digest(doc['text']))]}
 
@@ -283,6 +283,13 @@ class LeaderAgent:
         if not isinstance(tasks,list) or not all(t in self.specialists for t in tasks):raise ValueError('invalid_tasks')
         tasks=list(dict.fromkeys(tasks))
         scopes=self._scopes(ctx,state['document']['text'],tasks)
+        for task,teeth in state['request'].get('task_teeth',{}).items():
+            if task not in tasks:raise ValueError('scope_task_not_selected')
+            normalized=[str(tooth).removesuffix('牙') for tooth in teeth]
+            if not normalized or len(normalized)!=len(set(normalized)) or any(
+                not re.fullmatch('[1-4][1-8]',tooth) or not re.search(r'(?<!\d)'+tooth+r'(?!\d)',state['document']['text']) for tooth in normalized):
+                raise ValueError('scope_tooth_not_in_source')
+            scopes[task]=[tooth+'牙' for tooth in normalized]
         return {'tasks':tasks,'scopes':scopes,'trace':ctx.events+[event('leader','routed',tasks=tasks,scopes=scopes)]}
 
     def _scopes(self,ctx,text,tasks):
@@ -302,7 +309,7 @@ class LeaderAgent:
         return scopes
 
     def _review(self,state):
-        try:review=self.skills['information_review'].run(state['document']['text'],state['request'].get('images',[]))
+        try:review=self.registry.run('information_review',text=state['document']['text'],images=state['request'].get('images',[]))
         except Exception as exc:review={'text':state['document']['text'],'approved':False,'issues':[{'code':'review_failed','detail':str(exc)[:400]}]}
         return {'review':review,'issues':review['issues'],'trace':[event('information_review','done',approved=review['approved'],changed=review['text']!=state['document']['text'])]}
 

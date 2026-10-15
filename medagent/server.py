@@ -112,6 +112,8 @@ def create_app(config_path=None):
         'model_readiness':'not_probed','retrieval':request.app.state.index.describe(),'training_started':False}
     @router.get('/capabilities',tags=['service'])
     def capabilities():return settings.public()
+    @router.get('/skills',tags=['service'])
+    def skills(request:Request):return {'skills':request.app.state.consultation.agent.registry.describe()}
     @router.post('/assessments',status_code=202,tags=['assessment'])
     def assess(body:AssessmentRequest,request:Request,idempotency_key:str|None=Header(default=None)):
         payload=body.model_dump(exclude_none=True)

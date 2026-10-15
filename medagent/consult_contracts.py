@@ -28,20 +28,12 @@ def visible_messages(messages, recent=4):
     return ([opening]+tail) if opening is not None and opening not in tail else tail
 
 def policy_view(state, config, observations=None):
-    """Bound policy inputs without truncating patient facts or expert evidence links."""
-    view={k:state[k] for k in ('facts','needs','question_count','tool_count','asked_questions')}
-    view['asked_fields']=state.get('asked_fields',[])
-    view['urgent']=state.get('urgent',False)
-    view['historical_memory']=state.get('historical_memory',[])
-    view['memory_policy']='历史记忆不是本次症状。需患者重新确认后才能生成本次facts；不能当作当前检查或确诊。'
-    view['recent_messages']=visible_messages(state.get('messages',[]))
-    view['experts']={task:{k:v for k,v in result.items() if k in {'task','status','factors','patient_factors','tooth_factors','issues','error','input_version','analysis_explanation','risk_assessments'}} for task,result in state['experts'].items()}
-    view['knowledge']=[{k:v for k,v in chunk.items() if k in {'id','source','text','url'}} for chunk in state['knowledge']]
-    obs=observations if observations is not None else state.get('observations',[])
-    view['observations']=[{k:v for k,v in o.items() if k not in {'results'}} for o in obs]
-    view['registry']=[{k:v for k,v in a.items() if k in {'id','name','scope','tools'}} for a in REGISTRY.values()]
-    view['limits']={k:config[k] for k in ('max_actions','max_tools','max_questions','max_experts','max_experts_independent')}
-    return view
+    from .context import policy_context
+    view = dict(state)
+    if observations is not None:
+        view['observations'] = observations
+    return policy_context(view, config)
+
 
 def validate_facts(payload, sources):
     if not isinstance(payload, dict) or not isinstance(payload.get('facts'), list):
@@ -64,6 +56,10 @@ def validate_facts(payload, sources):
         f['start'] = source['text'].index(quote)
         f['end'] = f['start'] + len(quote)
         f['source_kind'] = source['kind']
+        if 'origin_source_id' in source:
+            f['origin_source_id']=source['origin_source_id']
+            f['origin_start']=source.get('origin_start',0)+f['start']
+            f['origin_end']=source.get('origin_start',0)+f['end']
         f['id'] = digest(json.dumps(f, ensure_ascii=False, sort_keys=True))[:20]
         # A located quote is syntactic support, not an independent medical judgment.
         f['validation'] = 'source_span_only'
@@ -84,7 +80,8 @@ def merge_facts(previous, incoming):
 def pending_experts(state):
     from .routing import selected_tasks
     selected=selected_tasks(state.get('needs',{'candidates':[]}))
-    version=digest(json.dumps(state.get('sources',{}),sort_keys=True,ensure_ascii=False))
+    from .context import source_version
+    version=source_version(state)
     completed={task for task,result in state.get('experts',{}).items() if result.get('status')!='failed' and result.get('input_version')==version}
     return selected-completed
 

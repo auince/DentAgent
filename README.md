@@ -9,7 +9,7 @@ DentAgent 是一个口腔多 Agent 后端，支持病历分析、图片审校和
 - **专病评估**：专病 Agent 提取患者级、患牙级因素，关联原文证据并生成风险说明；独立规则引擎负责评分和等级判定。
 - **知识检索**：Leader 根据专病结果检索知识库，支持 BM25、向量召回、RRF 融合与重排序，返回相似病症文档和分析依据。
 
-流程由 LangGraph 主图与专病子图编排，主要功能通过 FastAPI 提供。评估结果用于辅助分析，信息不足时保留未知项，不替代临床诊断。
+四个专病 Agent 通过统一 Skill 接口调用因素提取、证据定位、规则执行和说明生成。流程由 LangGraph 主图与专病子图编排，主要功能通过 FastAPI 提供。评估结果用于辅助分析，信息不足时保留未知项，不替代临床诊断。
 
 ## 版本
 
@@ -24,6 +24,7 @@ DentAgent 是一个口腔多 Agent 后端，支持病历分析、图片审校和
 | V7 | 患者对话、症状追问与记忆 |
 | V8 | 新增牙髓与根尖周、牙周 Agent；后续加入后端 API 与统一配置 |
 | V9 | 混合检索与重排序；后续完善 Agent 职责、风险说明和参考规则 |
+| V9.4 | 统一 Skill 注册与调用、证据筛选、历史摘要和 Token 预算 |
 
 各版代码可在 [Tags](https://github.com/auince/DentAgent/tags) 中查看，例如 `git checkout v8.0.0`。以下使用方式对应当前 `main`。
 
@@ -43,6 +44,14 @@ python scripts/server.py --config configs/service.json
 启动前需准备本地的 `configs/service.json`、`configs/specialties.json`、提示词、审校 skill 和知识资料，并部署模型服务。地址、模型标识和资源路径统一由配置文件管理，凭据通过环境变量传入。仓库不包含本地配置、病例数据、模型权重及知识资料。
 
 服务访问令牌由配置中的 `http.api_key_env` 指定；以下示例使用 `MEDAGENT_API_TOKEN`。完整接口与请求格式可在服务的 OpenAPI 页面查看，文档路径由 `http.docs_path` 配置。
+
+## Skill 与上下文（v9.4）
+
+Skill 通过 `BaseSkill` 和 `SkillRegistry` 注册，统一使用 `SkillInput → SkillResult`，可通过 `GET /skills` 查看输入输出 Schema。新增能力继承 `BaseSkill` 并注册即可；Agent 只负责图编排。
+
+病历证据按专病与患牙选择，保留原文片段、来源和偏移。对话保留有限的活跃事实与消息，较早内容生成带事实引用的摘录摘要，完整来源另存 SQLite，供专病按需取回。摘要不能充当检查证据。
+
+可在统一配置的 `context` 段调整活跃记录数、证据及摘要预算；用 `models.<角色>.context_window_tokens` 声明模型窗口、`max_tokens` 预留输出。配置 `token_count_path` 时调用模型原生计数接口，否则使用保守的 UTF-8 字节与图片尺寸估算。原生计数接口需支持聊天请求并返回 `count` 或 `tokens`；确认它已包含视觉 Token 时，可设置 `token_counter_includes_images: true`。计数包含模板、视觉输入的准确性取决于所接服务；超出预算或计数接口不可用时停止调用并返回明确错误。
 
 ## 使用示例
 
@@ -67,7 +76,7 @@ curl --fail-with-body -sS "$API_BASE/runs/$RUN_ID" \
   -H "Authorization: Bearer $MEDAGENT_API_TOKEN"
 ```
 
-评估为异步任务，需查询 `run_id` 获取结果。结果包含结构化因素、风险等级、原文证据、审校记录和相似病症文档。`tasks` 可选择 `root_canal`、`crack`、`pulp_periapical`、`periodontal`；使用自动路由时设为 `routing_mode: "auto"`，并省略 `tasks`。
+评估为异步任务，需查询 `run_id` 获取结果。结果包含结构化因素、风险等级、原文证据、审校记录和相似病症文档。`tasks` 可选择 `root_canal`、`crack`、`pulp_periapical`、`periodontal`；手动路由可用 `task_teeth` 指定各专病的患牙，如 `{"root_canal":["36"]}`；使用自动路由时设为 `routing_mode: "auto"`，并省略 `tasks`。
 
 ### 患者对话
 
@@ -104,6 +113,7 @@ curl --fail-with-body -sS "$API_BASE/knowledge/search" \
 
 | 接口 | 功能 |
 | --- | --- |
+| `GET /skills` | 已注册能力及输入输出 Schema |
 | `POST /assessments` | 病历评估与专病路由 |
 | `POST /records/review` | 图片与文本审校，图片采用 base64 data URL |
 | `POST /sessions` | 创建会话 |

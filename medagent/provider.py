@@ -9,6 +9,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from .settings import get_settings
+from .token_budget import TokenBudget, context_options, ContextBudgetExceeded
 
 CALL_METADATA=contextvars.ContextVar('local_model_call_metadata',default=None)
 
@@ -42,10 +43,42 @@ class LocalModelClient:
             "temperature": cfg.get("temperature", 0), "max_tokens": cfg.get("max_tokens", 4096),
             "chat_template_kwargs": {"enable_thinking": False}}
         if response_format is not None:body['response_format']=response_format
+        budget = TokenBudget(context_options(), cfg)
+        body['max_tokens'] = budget.output
+        count_path = cfg.get('token_count_path')
         headers = {"Content-Type": "application/json"}
         key = os.environ.get(cfg.get("api_key_env", ""))
         if key:
             headers["Authorization"] = "Bearer " + key
+        if count_path:
+            # Explicitly configured, model-native chat tokenizer. A failing counter fails closed.
+            count_body = {'model': cfg['model'], 'messages': body['messages'], 'add_generation_prompt': True}
+            counter_request = urllib.request.Request(endpoint.rstrip('/') + count_path,
+                json.dumps(count_body).encode(), headers)
+            try:
+                with urllib.request.urlopen(counter_request, timeout=cfg.get('timeout', 180)) as response:
+                    raw_count = response.read(1_000_001)
+                if len(raw_count) > 1_000_000:
+                    raise ValueError('token_counter_response_too_large')
+                native = json.loads(raw_count)
+                count = native.get('count')
+                if count is None and isinstance(native.get('tokens'), list):
+                    count = len(native['tokens'])
+                if type(count) is not int or count < 0:
+                    raise ValueError('invalid_token_count')
+                # Some text tokenizers omit vision tokens; add a conservative visual reserve.
+                if not cfg.get('token_counter_includes_images',False):
+                    count += budget.image_tokens(images)
+                audit = budget.check(count, method='configured_model_tokenizer')
+                audit['vision_count_method'] = ('native_multimodal_counter' if cfg.get('token_counter_includes_images',False) else 'additional_pixel_patch_reserve') if images else 'not_applicable'
+            except ContextBudgetExceeded:
+                raise
+            except Exception:
+                raise ModelUnavailable(role + ': token_counter_unavailable') from None
+        else:
+            audit = budget.check(budget.estimate(system, text, images))
+            audit['vision_count_method'] = 'pixel_patch_conservative_estimate' if images else 'not_applicable'
+        CALL_METADATA.set({'context_budget': audit})
         retries = cfg.get('retries', 1)
         for attempt in range(retries + 1):
             req = urllib.request.Request(endpoint.rstrip("/") + cfg["chat_path"], json.dumps(body).encode(), headers)
@@ -54,7 +87,7 @@ class LocalModelClient:
                     result = json.load(response)
                 choice = result["choices"][0]
                 CALL_METADATA.set({'model':result.get('model',cfg['model']),
-                    'usage':result.get('usage'),'finish_reason':choice.get('finish_reason')})
+                    'usage':result.get('usage'),'finish_reason':choice.get('finish_reason'),'context_budget':audit})
                 if choice.get("finish_reason") == "length":
                     raise ModelUnavailable(role + ": output_truncated")
                 return choice["message"]["content"]

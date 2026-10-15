@@ -32,7 +32,27 @@ class Settings:
             if parts.scheme not in {'http','https'} or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
                 raise ValueError('invalid_model_service_url:'+name)
             if 'chat_path' in service and not service['chat_path'].startswith('/'):raise ValueError('invalid_chat_path:'+name)
-        self.model_roles()
+        roles=self.model_roles()
+        from .token_budget import DEFAULT_CONTEXT
+        context=self.data.get('context',{})
+        if not isinstance(context,dict) or set(context)-set(DEFAULT_CONTEXT):
+            raise ValueError('invalid_context_configuration')
+        for name,value in context.items():
+            if type(value) is not int or value<1:
+                raise ValueError('invalid_context_limit:'+name)
+        context={**DEFAULT_CONTEXT,**context}
+        if context['context_window_tokens']<=context['output_reserve_tokens']+context['safety_tokens']:
+            raise ValueError('invalid_context_window')
+        for role,cfg in roles.items():
+            window=cfg.get('context_window_tokens',context['context_window_tokens'])
+            output=cfg.get('max_tokens',context['output_reserve_tokens'])
+            if type(window) is not int or type(output) is not int or output<1 or window<=output+context['safety_tokens']:
+                raise ValueError('invalid_model_context_window:'+role)
+            if type(cfg.get('token_counter_includes_images',False)) is not bool:
+                raise ValueError('invalid_multimodal_token_counter_flag:'+role)
+            path=cfg.get('token_count_path')
+            if path is not None and (not isinstance(path,str) or not path.startswith('/') or path.startswith('//')):
+                raise ValueError('invalid_token_count_path:'+role)
         mode=self.data['retrieval'].get('mode')
         if mode not in {'bm25','hybrid'}:raise ValueError('invalid_retrieval_mode')
         r=self.data['retrieval']
@@ -75,7 +95,8 @@ class Settings:
         for role,alias in (mapping or {k:k for k in self.data['models']}).items():
             cfg=copy.deepcopy(self.data['models'][alias])
             service=self.data['model_services'][cfg.pop('service')]
-            cfg.update(endpoint=service['base_url'],chat_path=service['chat_path'],api_key_env=service.get('api_key_env',''))
+            cfg.update(endpoint=service['base_url'],chat_path=service['chat_path'],api_key_env=service.get('api_key_env',''),token_count_path=cfg.get('token_count_path',service.get('token_count_path')),
+                token_counter_includes_images=cfg.get('token_counter_includes_images',service.get('token_counter_includes_images',False)))
             roles[role]=cfg
         return roles
 
@@ -86,11 +107,13 @@ class Settings:
 
     def public(self):
         from .common import read_json
+        from .token_budget import context_options
         return {'service':self.data['service_name'],'version':self.data['version'],
             'api_prefix':self.data['http']['api_prefix'],'specialties':read_json(self.path('specialties_file'))['agents'],
             'retrieval_mode':self.data['retrieval']['mode'],
             'models':{role:cfg['model'] for role,cfg in self.data['models'].items()},
-            'limits':self.data['limits'],'training_managed_by_service':False}
+            'limits':self.data['limits'],'context':context_options(self),
+            'training_managed_by_service':False}
 
 @lru_cache(maxsize=1)
 def get_settings():return Settings(os.environ.get('MEDAGENT_CONFIG',str(DEFAULT_CONFIG)))

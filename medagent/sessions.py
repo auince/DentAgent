@@ -16,6 +16,12 @@ class SessionStore:
             c.execute('PRAGMA journal_mode=WAL')
             c.execute('CREATE TABLE IF NOT EXISTS profiles (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated REAL NOT NULL)')
             c.execute('CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, active_run TEXT, updated REAL NOT NULL)')
+            c.execute('CREATE TABLE IF NOT EXISTS context_sources (cid TEXT NOT NULL, sid TEXT NOT NULL, body TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, updated REAL NOT NULL, PRIMARY KEY(cid,sid))')
+            c.execute('CREATE TABLE IF NOT EXISTS context_facts (cid TEXT NOT NULL, fid TEXT NOT NULL, sid TEXT NOT NULL, tooth TEXT NOT NULL, tags TEXT NOT NULL, background INTEGER NOT NULL, body TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, updated REAL NOT NULL, PRIMARY KEY(cid,fid))')
+            c.execute('CREATE INDEX IF NOT EXISTS context_fact_lookup ON context_facts(cid,active,background,updated)')
+            c.execute('CREATE TABLE IF NOT EXISTS context_messages (cid TEXT NOT NULL, mid TEXT NOT NULL, body TEXT NOT NULL, created REAL NOT NULL, PRIMARY KEY(cid,mid))')
+            c.execute('CREATE TABLE IF NOT EXISTS context_source_index (cid TEXT NOT NULL, sid TEXT NOT NULL, tags TEXT NOT NULL, teeth TEXT NOT NULL, background INTEGER NOT NULL, updated REAL NOT NULL, PRIMARY KEY(cid,sid))')
+            c.execute('CREATE INDEX IF NOT EXISTS source_context_lookup ON context_source_index(cid,background,updated)')
         self.path.chmod(0o600)
 
     def connect(self): return sqlite3.connect(str(self.path), timeout=10)
@@ -50,11 +56,88 @@ class SessionStore:
             c.execute('UPDATE sessions SET active_run=?,updated=? WHERE id=?',(rid,time.time(),cid))
         return json.loads(row[0])
 
+    def _archive(self, c, cid, state):
+        from .context import background, task_tags, TEETH
+        from .common import digest
+        now = time.time()
+        for sid, source in state.get('sources', {}).items():
+            c.execute('INSERT INTO context_sources VALUES (?,?,?,1,?) ON CONFLICT(cid,sid) DO UPDATE SET body=excluded.body, active=1',
+                (cid, sid, json.dumps(source, ensure_ascii=False), source.get('time', now)))
+            value=source.get('text','')
+            c.execute('INSERT INTO context_source_index VALUES (?,?,?,?,?,?) ON CONFLICT(cid,sid) DO UPDATE SET tags=excluded.tags,teeth=excluded.teeth,background=excluded.background',
+                (cid,sid,'|'+'|'.join(task_tags(value))+'|','|'+'|'.join(sorted(set(TEETH.findall(value))))+'|',int(background(value)),source.get('time',now)))
+            for replaced in source.get('replaces', []):
+                c.execute('UPDATE context_sources SET active=0 WHERE cid=? AND sid=?', (cid, replaced))
+                c.execute('UPDATE context_facts SET active=0 WHERE cid=? AND sid=?', (cid, replaced))
+        for fact in state.get('facts', []):
+            source = state.get('sources', {}).get(fact['source_id'], {})
+            c.execute('INSERT INTO context_facts VALUES (?,?,?,?,?,?,?,1,?) ON CONFLICT(cid,fid) DO UPDATE SET body=excluded.body',
+                (cid, fact['id'], fact['source_id'], str(fact.get('tooth') or '').removesuffix('牙'),
+                 '|' + '|'.join(task_tags(fact)) + '|', int(background(fact)),
+                 json.dumps(fact, ensure_ascii=False), source.get('time', now)))
+        for message in state.get('messages', []):
+            raw = json.dumps(message, ensure_ascii=False, sort_keys=True)
+            mid = message.get('id') or message.get('run_id') or digest(raw)
+            c.execute('INSERT OR IGNORE INTO context_messages VALUES (?,?,?,?)', (cid, mid, raw, now))
+
     def finish(self,cid,rid,state):
+        from .context import compact_session
+        compact = compact_session(state)
         with self.connect() as c:
-            changed=c.execute('UPDATE sessions SET data=?,active_run=NULL,updated=? WHERE id=? AND active_run=?',
-                (json.dumps(state,ensure_ascii=False),time.time(),cid,rid)).rowcount
-            if changed!=1: raise SessionBusy('session_run_owner_mismatch')
+            c.execute('BEGIN IMMEDIATE')
+            row = c.execute('SELECT active_run FROM sessions WHERE id=?', (cid,)).fetchone()
+            if row is None or row[0] != rid:
+                raise SessionBusy('session_run_owner_mismatch')
+            self._archive(c, cid, state)
+            c.execute('UPDATE sessions SET data=?,active_run=NULL,updated=? WHERE id=? AND active_run=?',
+                (json.dumps(compact,ensure_ascii=False),time.time(),cid,rid))
+
+    def evidence(self, cid, task, scope=None):
+        """Read a bounded, specialty/tooth-filtered archive view for this conversation only."""
+        from .context import normalized_scope
+        from .token_budget import context_options
+        clauses = ["cid=?", "active=1"]
+        params = [cid]
+        if task:
+            clauses.append("(background=1 OR tags='||' OR tags LIKE ?)")
+            params.append('%|' + task + '|%')
+        teeth = sorted(normalized_scope(scope))
+        if teeth:
+            clauses.append("(background=1 OR tooth='' OR tooth IN (" + ','.join('?' for _ in teeth) + '))')
+            params.extend(teeth)
+        query = ('SELECT body,sid FROM context_facts WHERE ' + ' AND '.join(clauses) +
+            ' ORDER BY background DESC,updated DESC LIMIT ?')
+        params.append(context_options()['archive_candidates'])
+        with self.connect() as c:
+            rows = c.execute(query, params).fetchall()
+            facts = [json.loads(row[0]) for row in rows]
+            sources = {}
+            for sid in dict.fromkeys(row[1] for row in rows):
+                source = c.execute('SELECT body FROM context_sources WHERE cid=? AND sid=? AND active=1', (cid, sid)).fetchone()
+                if source:
+                    sources[sid] = json.loads(source[0])
+            fact_total=c.execute('SELECT COUNT(*) FROM context_facts WHERE '+' AND '.join(clauses),params[:-1]).fetchone()[0]
+            raw_clauses=["s.cid=?","s.active=1"]
+            raw_params=[cid]
+            if task:
+                raw_clauses.append("(x.background=1 OR x.tags='||' OR x.tags LIKE ?)")
+                raw_params.append('%|'+task+'|%')
+            if teeth:
+                raw_clauses.append("(x.background=1 OR x.teeth='||' OR "+' OR '.join('x.teeth LIKE ?' for _ in teeth)+')')
+                raw_params.extend('%|'+tooth+'|%' for tooth in teeth)
+            join=' FROM context_sources s JOIN context_source_index x ON s.cid=x.cid AND s.sid=x.sid WHERE '+' AND '.join(raw_clauses)
+            source_total=c.execute('SELECT COUNT(*)'+join,raw_params).fetchone()[0]
+            raw_rows=c.execute('SELECT s.sid,s.body'+join+' ORDER BY x.background DESC,x.updated DESC LIMIT ?',raw_params+[context_options()['archive_candidates']]).fetchall()
+            omitted_sources=0
+            for sid,body in raw_rows:
+                if sid not in sources and len(sources)>=context_options()['archive_candidates']:
+                    omitted_sources+=1
+                    continue
+                sources[sid]=json.loads(body)
+        return {'facts': [f for f in facts if f['source_id'] in sources], 'sources': sources,
+            'archive_audit':{'facts_truncated':fact_total>len(rows),
+                'sources_truncated':source_total>len(raw_rows) or omitted_sources>0,
+                'candidate_limit':context_options()['archive_candidates']}}
 
     def release(self,cid,rid):
         with self.connect() as c:
@@ -75,11 +158,18 @@ class SessionStore:
             if row is None:raise KeyError('conversation_not_found')
             if row[1]:raise SessionBusy('conversation_has_active_run')
             state=json.loads(row[0]);known={f['id']:f for f in state['facts']}
+            for fid in fact_ids:
+                if fid not in known:
+                    archived=c.execute('SELECT body FROM context_facts WHERE cid=? AND fid=? AND active=1',(cid,fid)).fetchone()
+                    if archived:known[fid]=json.loads(archived[0])
             if any(i not in known for i in fact_ids):raise ValueError('unknown_memory_fact')
             old=c.execute('SELECT data FROM profiles WHERE id=?',(state['patient_id'],)).fetchone()
             memory={x['id']:x for x in json.loads(old[0])}
             for fid in set(fact_ids):
                 fact=known[fid];source=state['sources'].get(fact['source_id'])
+                if not source:
+                    archived=c.execute('SELECT body FROM context_sources WHERE cid=? AND sid=? AND active=1',(cid,fact['source_id'])).fetchone()
+                    source=json.loads(archived[0]) if archived else None
                 if not source or fact['quote'] not in source['text'] or source.get('kind')!='patient_report':raise ValueError('memory_requires_patient_source')
                 if fact.get('status')=='conflict' or fact.get('conflicts_with'):raise ValueError('conflicting_memory_requires_clarification')
                 memory[fid]={'id':fid,'name':fact['name'],'value':fact.get('value'),

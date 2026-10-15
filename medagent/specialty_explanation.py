@@ -18,6 +18,9 @@ class SpecialtyExplanation:
             if item.get('supported') is False:continue
             references.append({'id':item.get('factor_id') or 'factor-evidence-'+str(i),
                 'factor':item.get('factor'),'quote':quote,'source_id':source_id,'start':start,'end':end,
+                'origin_source_id':item.get('origin_source_id',result.get('sources',{}).get(source_id,{}).get('origin_source_id',source_id)),
+                'origin_start':item.get('origin_start',result.get('sources',{}).get(source_id,{}).get('origin_start',0)+start),
+                'origin_end':item.get('origin_end',result.get('sources',{}).get(source_id,{}).get('origin_start',0)+end),
                 'source_span_verified':True,'clinical_entailment_verified':False})
         return references
 

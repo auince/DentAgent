@@ -11,6 +11,7 @@ class AssessmentRequest(StrictBody):
     text:str=''
     images:list[str]=Field(default_factory=list)
     tasks:list[str]|None=None
+    task_teeth:dict[str,list[str]]=Field(default_factory=dict)
     routing_mode:Literal['manual','auto']|None=None
     instruction:str='综合评估'
     @model_validator(mode='after')
@@ -24,6 +25,13 @@ class AssessmentRequest(StrictBody):
         if self.tasks is not None and (not self.tasks or len(set(self.tasks))!=len(self.tasks) or any(t not in REGISTRY for t in self.tasks)):raise ValueError('invalid_specialty_tasks')
         if mode=='manual' and not self.tasks:raise ValueError('manual_route_requires_tasks')
         if mode=='auto' and self.tasks is not None:raise ValueError('auto_route_cannot_also_select_tasks')
+        if self.task_teeth:
+            if mode!='manual' or any(task not in (self.tasks or []) for task in self.task_teeth):
+                raise ValueError('task_teeth_requires_selected_manual_tasks')
+            for task,teeth in self.task_teeth.items():
+                normalized=[tooth.removesuffix('牙') for tooth in teeth]
+                if not normalized or len(normalized)!=len(set(normalized)) or any(not re.fullmatch('[1-4][1-8]',tooth) for tooth in normalized):
+                    raise ValueError('invalid_task_tooth_scope')
         self.routing_mode=mode
         return self
 
